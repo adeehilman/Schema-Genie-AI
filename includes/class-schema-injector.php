@@ -3,12 +3,9 @@
  * Schema Injector — outputs JSON-LD in the wp_head.
  *
  * Strategy:
- * 1. If Rank Math is active → inject via rank_math/json_ld filter (replaces duplicate types)
- * 2. If Rank Math is NOT active → inject standalone <script type="application/ld+json"> via wp_head
- *
- * NOTE: We do NOT write to Rank Math's 'rank_math_schema' post meta because
- * Rank Math's JS does recursive lodash cloneDeep/mapValues on all schema
- * properties and crashes when encountering nested objects without 'metadata.isPrimary'.
+ * 1. If Rank Math is active AND schemas are synced → let Rank Math handle output
+ * 2. If Rank Math is active but NOT synced → inject via rank_math/json_ld filter
+ * 3. If Rank Math is NOT active → inject standalone <script type="application/ld+json"> via wp_head
  */
 defined('ABSPATH') || exit;
 
@@ -27,8 +24,17 @@ class Schema_Genie_AI_Injector {
     }
 
     /**
-     * Inject schemas via Rank Math's json_ld filter.
-     * This replaces Rank Math's default Article/WebPage schemas with ours.
+     * Check if schemas for a post have been synced to Rank Math's meta.
+     */
+    public static function is_synced_to_rank_math(int $post_id): bool {
+        $rm_schemas = get_post_meta($post_id, 'rank_math_schema', true);
+        return !empty($rm_schemas) && is_array($rm_schemas);
+    }
+
+    /**
+     * Inject via Rank Math's json_ld filter.
+     * If synced to rank_math_schema, Rank Math handles output — we just return.
+     * If not synced, we inject our schemas into the filter data.
      */
     public function inject_via_rank_math(array $data, $jsonld): array {
         $supported = Schema_Genie_AI_Meta_Box::get_supported_post_types();
@@ -37,20 +43,24 @@ class Schema_Genie_AI_Injector {
         $post_id = get_the_ID();
         if (!$post_id) return $data;
 
+        // If synced to Rank Math meta, Rank Math handles the output
+        if (self::is_synced_to_rank_math($post_id)) {
+            return $data;
+        }
+
+        // Fallback: inject via filter for posts not yet synced
         $schema_data = get_post_meta($post_id, '_schema_genie_ai_data', true);
         if (empty($schema_data)) return $data;
 
         $schemas = json_decode($schema_data, true);
         if (!is_array($schemas)) return $data;
 
-        // Collect our schema types
         $our_types = [];
         foreach ($schemas as $schema) {
             $types = is_array($schema['@type']) ? $schema['@type'] : [$schema['@type']];
             foreach ($types as $t) $our_types[] = $t;
         }
 
-        // Remove Rank Math's default schemas for types we override
         $types_to_replace = ['WebPage', 'Article', 'NewsArticle'];
         foreach ($data as $key => $entity) {
             if (!isset($entity['@type'])) continue;
@@ -63,7 +73,6 @@ class Schema_Genie_AI_Injector {
             }
         }
 
-        // Add our schemas
         foreach ($schemas as $index => $schema) {
             $type_key = is_array($schema['@type']) ? implode('_', $schema['@type']) : $schema['@type'];
             $data['sgai_' . sanitize_key($type_key) . '_' . $index] = $schema;

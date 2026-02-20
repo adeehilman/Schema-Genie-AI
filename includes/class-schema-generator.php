@@ -68,12 +68,147 @@ class Schema_Genie_AI_Generator {
         update_post_meta($post_id, '_schema_genie_ai_generated', current_time('mysql'));
         update_post_meta($post_id, '_schema_genie_ai_status', 'success');
 
-        // Clean up any old Rank Math sync data from previous plugin versions
-        // (writing to rank_math_schema causes JS crashes in Rank Math's admin)
-        delete_post_meta($post_id, 'rank_math_schema');
-        delete_post_meta($post_id, '_schema_genie_ai_rm_synced');
+        // Step 7: Sync to Rank Math Schema UI (if Rank Math is active)
+        $this->sync_to_rank_math($post_id, $final_graph);
 
         return $final_graph;
+    }
+
+    /**
+     * Sync generated schemas to Rank Math's schema storage.
+     */
+    private function sync_to_rank_math(int $post_id, array $graph): void {
+        if (!class_exists('RankMath') && !defined('RANK_MATH_VERSION')) {
+            return;
+        }
+
+        $syncable_types = [
+            'Article', 'NewsArticle', 'BlogPosting',
+            'WebPage', 'FAQPage',
+            'HowTo',
+            'LegalService',
+        ];
+
+        $rank_math_schemas = [];
+        $is_first = true;
+
+        foreach ($graph as $entity) {
+            if (!isset($entity['@type'])) continue;
+
+            $types = is_array($entity['@type']) ? $entity['@type'] : [$entity['@type']];
+            $primary_type = $types[0];
+
+            $should_sync = false;
+            foreach ($types as $t) {
+                if (in_array($t, $syncable_types, true)) {
+                    $should_sync = true;
+                    break;
+                }
+            }
+            if (!$should_sync) continue;
+
+            $rm_schema = $this->convert_to_rank_math_format($entity, $primary_type, $is_first);
+
+            $unique_id = substr(md5($primary_type . $post_id . wp_rand()), 0, 6);
+            $rank_math_schemas['schema-' . $unique_id] = $rm_schema;
+            $is_first = false;
+        }
+
+        // Always delete first to clear stale/corrupted data from previous versions
+        delete_post_meta($post_id, 'rank_math_schema');
+
+        if (!empty($rank_math_schemas)) {
+            update_post_meta($post_id, 'rank_math_schema', $rank_math_schemas);
+        }
+    }
+
+    /**
+     * Convert a JSON-LD entity to Rank Math's internal schema format.
+     *
+     * CRITICAL: Rank Math's JS uses lodash mapValues to iterate EVERY property
+     * of each schema object. For each nested object value, it accesses
+     * value.metadata.isPrimary. If ANY nested object doesn't have 'metadata',
+     * it crashes with: TypeError: Cannot read properties of undefined (reading 'isPrimary')
+     *
+     * Solution: Recursively add 'metadata' with 'isPrimary: false' to EVERY
+     * nested object in the schema tree. Only the top-level gets isPrimary: true.
+     */
+    private function convert_to_rank_math_format(array $entity, string $primary_type, bool $is_primary): array {
+        $rm_type_map = [
+            'NewsArticle'  => 'Article',
+            'BlogPosting'  => 'Article',
+            'Article'      => 'Article',
+            'WebPage'      => 'WebPage',
+            'FAQPage'      => 'FAQPage',
+            'HowTo'        => 'HowTo',
+            'LegalService' => 'LocalBusiness',
+        ];
+
+        $rm_type = $rm_type_map[$primary_type] ?? $primary_type;
+
+        // Remove fields Rank Math doesn't use
+        unset($entity['@context'], $entity['@id']);
+
+        // Recursively add metadata to ALL nested objects
+        $entity = $this->add_metadata_recursive($entity);
+
+        // Set the top-level metadata (overrides the one added by recursive function)
+        $entity['metadata'] = [
+            'title'     => $rm_type,
+            'type'      => 'template',
+            'shortcode' => 'schema-genie-ai-' . strtolower(sanitize_key($primary_type)),
+            'isPrimary' => $is_primary,
+        ];
+
+        return $entity;
+    }
+
+    /**
+     * Recursively add 'metadata' to every nested associative array (object).
+     * This prevents Rank Math's JS from crashing when it deep-iterates schemas.
+     */
+    private function add_metadata_recursive(array $data): array {
+        foreach ($data as $key => &$value) {
+            if ($key === 'metadata') continue; // Don't recurse into metadata itself
+
+            if (is_array($value)) {
+                // Check if this is an associative array (object) or a sequential array (list)
+                if ($this->is_assoc_array($value)) {
+                    // It's an object — recurse and add metadata
+                    $value = $this->add_metadata_recursive($value);
+                    if (!isset($value['metadata'])) {
+                        $value['metadata'] = [
+                            'type'      => 'template',
+                            'isPrimary' => false,
+                        ];
+                    }
+                } else {
+                    // It's a sequential array (list of items, e.g. FAQ questions)
+                    foreach ($value as $idx => &$item) {
+                        if (is_array($item) && $this->is_assoc_array($item)) {
+                            $item = $this->add_metadata_recursive($item);
+                            if (!isset($item['metadata'])) {
+                                $item['metadata'] = [
+                                    'type'      => 'template',
+                                    'isPrimary' => false,
+                                ];
+                            }
+                        }
+                    }
+                    unset($item);
+                }
+            }
+        }
+        unset($value);
+        return $data;
+    }
+
+    /**
+     * Check if an array is associative (has string keys).
+     */
+    private function is_assoc_array(array $arr): bool {
+        if (empty($arr)) return false;
+        return array_keys($arr) !== range(0, count($arr) - 1);
     }
 
 
