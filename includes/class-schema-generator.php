@@ -112,25 +112,29 @@ class Schema_Genie_AI_Generator {
             $types = is_array($entity['@type']) ? $entity['@type'] : [$entity['@type']];
             $primary_type = $types[0];
 
-            // Skip native types
-            $should_skip = false;
-            foreach ($types as $t) {
-                if (in_array($t, $skip_types, true)) {
-                    $should_skip = true;
-                    break;
-                }
-            }
-            if ($should_skip) continue;
-
-            // Check if syncable
+            // Check if ANY type is syncable (takes priority over skip)
             $should_sync = false;
             foreach ($types as $t) {
                 if (in_array($t, $syncable_types, true)) {
                     $should_sync = true;
+                    $primary_type = $t; // Use the syncable type as primary
                     break;
                 }
             }
-            if (!$should_sync) continue;
+
+            // If not syncable, check if ALL types are skip-only
+            if (!$should_sync) {
+                $is_skip_only = true;
+                foreach ($types as $t) {
+                    if (!in_array($t, $skip_types, true)) {
+                        $is_skip_only = false;
+                        break;
+                    }
+                }
+                if ($is_skip_only) continue;
+                // Not syncable and not skip-only = unknown type, skip it
+                continue;
+            }
 
             $rm_entity = $this->convert_to_rank_math_format($entity, $primary_type, $is_first);
 
