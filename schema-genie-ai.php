@@ -3,7 +3,7 @@
  * Plugin Name: Schema Genie AI
  * Plugin URI:  https://wordpress.org/plugins/schema-genie-ai/
  * Description: AI-powered JSON-LD structured data generator. Automatically creates Article, LegalService, FAQPage, and HowTo schema markup based on your content using Azure OpenAI.
- * Version:     1.0.0
+ * Version:     1.1.0
  * Author:      Schema Genie
  * Author URI:  https://wordpress.org/plugins/schema-genie-ai/
  * License:     GPL v2 or later
@@ -13,7 +13,7 @@
 defined('ABSPATH') || exit;
 
 // Plugin constants
-define('SCHEMA_GENIE_AI_VERSION', '1.0.0');
+define('SCHEMA_GENIE_AI_VERSION', '1.1.0');
 define('SCHEMA_GENIE_AI_PATH', plugin_dir_path(__FILE__));
 define('SCHEMA_GENIE_AI_URL', plugin_dir_url(__FILE__));
 
@@ -118,6 +118,12 @@ class Schema_Genie_AI_Plugin {
         delete_post_meta($post_id, '_schema_genie_ai_error');
         delete_post_meta($post_id, '_schema_genie_ai_raw');
         delete_post_meta($post_id, '_schema_genie_ai_tokens');
+        delete_post_meta($post_id, '_schema_genie_ai_rm_synced');
+
+        // Also clear Rank Math schema if it was synced by us
+        if (class_exists('RankMath') || defined('RANK_MATH_VERSION')) {
+            delete_post_meta($post_id, 'rank_math_schema');
+        }
 
         wp_send_json_success([
             'message' => __('Schema cleared.', 'schema-genie-ai'),

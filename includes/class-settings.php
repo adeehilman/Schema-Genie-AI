@@ -264,46 +264,263 @@ class Schema_Genie_AI_Settings {
         $total_posts = (int) $wpdb->get_var(
             "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'post' AND post_status = 'publish'"
         );
-        ?>
-        <div class="wrap">
-            <h1><?php esc_html_e('Schema Genie AI Settings', 'schema-genie-ai'); ?></h1>
+        $total_pages = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'page' AND post_status = 'publish'"
+        );
+        $rm_synced = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = '_schema_genie_ai_rm_synced' AND meta_value = '1'"
+        );
 
-            <!-- Stats -->
-            <div style="background: #fff; border: 1px solid #ccd0d4; padding: 15px 20px; margin-bottom: 20px; display: flex; gap: 30px;">
+        // Setup status checks
+        $has_endpoint = !empty(get_option('schema_genie_ai_azure_endpoint', ''));
+        $has_api_key  = !empty(get_option('schema_genie_ai_api_key', ''));
+        $has_rank_math = class_exists('RankMath') || defined('RANK_MATH_VERSION');
+        $coverage_pct = $total_posts > 0 ? round(($total_schemas / $total_posts) * 100) : 0;
+        $posts_remaining = max(0, $total_posts - $total_schemas);
+
+        ?>
+        <style>
+            .sgai-wrap { max-width: 960px; }
+            .sgai-header {
+                background: linear-gradient(135deg, #1d2327 0%, #2c3338 100%);
+                color: #fff; padding: 24px 30px; border-radius: 8px;
+                margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between;
+            }
+            .sgai-header h1 { color: #fff; margin: 0; font-size: 22px; padding: 0; }
+            .sgai-header .sgai-version {
+                background: rgba(255,255,255,0.15); padding: 4px 12px;
+                border-radius: 20px; font-size: 12px; color: #c3c4c7;
+            }
+            .sgai-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+            .sgai-card {
+                background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
+                padding: 20px; text-align: center; transition: box-shadow 0.2s;
+            }
+            .sgai-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+            .sgai-card .sgai-card-icon { font-size: 28px; margin-bottom: 4px; }
+            .sgai-card .sgai-card-value { font-size: 28px; font-weight: 700; line-height: 1.2; }
+            .sgai-card .sgai-card-label { font-size: 12px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
+            .sgai-card-success .sgai-card-value { color: #00a32a; }
+            .sgai-card-error .sgai-card-value { color: #d63638; }
+            .sgai-card-pending .sgai-card-value { color: #dba617; }
+            .sgai-card-info .sgai-card-value { color: #2271b1; }
+
+            .sgai-setup-wizard {
+                background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
+                padding: 24px 30px; margin-bottom: 20px;
+            }
+            .sgai-setup-wizard h2 { margin-top: 0; font-size: 16px; }
+            .sgai-steps { display: flex; gap: 0; margin: 16px 0 0; }
+            .sgai-step {
+                flex: 1; text-align: center; padding: 16px 12px;
+                position: relative; border: 1px solid #e0e0e0; background: #f9f9f9;
+            }
+            .sgai-step:first-child { border-radius: 6px 0 0 6px; }
+            .sgai-step:last-child { border-radius: 0 6px 6px 0; }
+            .sgai-step-done { background: #f0f9f0; border-color: #00a32a; }
+            .sgai-step-active { background: #fff8e5; border-color: #dba617; }
+            .sgai-step-num {
+                display: inline-block; width: 28px; height: 28px; line-height: 28px;
+                border-radius: 50%; font-weight: 700; font-size: 13px; margin-bottom: 6px;
+            }
+            .sgai-step-done .sgai-step-num { background: #00a32a; color: #fff; }
+            .sgai-step-active .sgai-step-num { background: #dba617; color: #fff; }
+            .sgai-step .sgai-step-num { background: #c3c4c7; color: #fff; }
+            .sgai-step-title { font-size: 13px; font-weight: 600; color: #1d2327; }
+            .sgai-step-desc { font-size: 11px; color: #666; margin-top: 4px; }
+
+            .sgai-section-box {
+                background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
+                padding: 24px 30px; margin-bottom: 20px;
+            }
+            .sgai-section-box h2 { margin-top: 0; padding-top: 0; font-size: 16px; border-bottom: 1px solid #f0f0f0; padding-bottom: 12px; }
+
+            .sgai-guide {
+                background: #f0f6fc; border: 1px solid #c3daf5; border-radius: 8px;
+                padding: 20px 24px; margin-bottom: 20px;
+            }
+            .sgai-guide h3 { margin-top: 0; color: #1d2327; font-size: 14px; }
+            .sgai-guide ol { margin: 10px 0 0; padding-left: 20px; }
+            .sgai-guide ol li { margin-bottom: 8px; font-size: 13px; line-height: 1.5; color: #333; }
+            .sgai-guide code { background: #e8e8e8; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+
+            .sgai-coverage-bar {
+                background: #eee; height: 8px; border-radius: 4px; overflow: hidden; margin: 8px 0;
+            }
+            .sgai-coverage-fill {
+                height: 100%; border-radius: 4px; transition: width 0.5s;
+            }
+        </style>
+
+        <div class="wrap sgai-wrap">
+
+            <!-- Header -->
+            <div class="sgai-header">
                 <div>
-                    <strong style="font-size: 24px; color: #2271b1;"><?php echo esc_html($total_schemas); ?></strong>
-                    <br><span style="color: #666;"><?php esc_html_e('Schemas Generated', 'schema-genie-ai'); ?></span>
+                    <h1>🧞 Schema Genie AI</h1>
+                    <p style="margin: 4px 0 0; color: #a7aaad; font-size: 13px;">
+                        <?php esc_html_e('AI-powered structured data generator for WordPress', 'schema-genie-ai'); ?>
+                    </p>
                 </div>
-                <div>
-                    <strong style="font-size: 24px; color: #d63638;"><?php echo esc_html($total_errors); ?></strong>
-                    <br><span style="color: #666;"><?php esc_html_e('Errors', 'schema-genie-ai'); ?></span>
-                </div>
-                <div>
-                    <strong style="font-size: 24px; color: #666;"><?php echo esc_html($total_posts - $total_schemas); ?></strong>
-                    <br><span style="color: #666;"><?php esc_html_e('Posts Without Schema', 'schema-genie-ai'); ?></span>
+                <div style="text-align: right;">
+                    <span class="sgai-version">v<?php echo esc_html(SCHEMA_GENIE_AI_VERSION); ?></span>
+                    <?php if ($has_rank_math): ?>
+                        <br><span style="font-size: 11px; color: #72aee6; margin-top: 4px; display: inline-block;">✓ Rank Math <?php esc_html_e('detected', 'schema-genie-ai'); ?></span>
+                    <?php endif; ?>
                 </div>
             </div>
 
-            <form method="post" action="options.php">
-                <?php
-                settings_fields(self::OPTION_GROUP);
-                do_settings_sections(self::PAGE_SLUG);
-                submit_button(__('Save Settings', 'schema-genie-ai'));
-                ?>
-            </form>
+            <!-- Setup Wizard -->
+            <?php
+            $step1_done = $has_endpoint;
+            $step2_done = $has_api_key;
+            $step3_done = $total_schemas > 0;
+            $all_done = $step1_done && $step2_done && $step3_done;
+            ?>
+            <?php if (!$all_done): ?>
+            <div class="sgai-setup-wizard">
+                <h2>🚀 <?php esc_html_e('Quick Setup', 'schema-genie-ai'); ?></h2>
+                <p style="color: #666; font-size: 13px; margin: 0;">
+                    <?php esc_html_e('Complete these steps to start generating schema markup:', 'schema-genie-ai'); ?>
+                </p>
+                <div class="sgai-steps">
+                    <div class="sgai-step <?php echo $step1_done ? 'sgai-step-done' : (!$step1_done ? 'sgai-step-active' : ''); ?>">
+                        <div class="sgai-step-num"><?php echo $step1_done ? '✓' : '1'; ?></div>
+                        <div class="sgai-step-title"><?php esc_html_e('Configure Endpoint', 'schema-genie-ai'); ?></div>
+                        <div class="sgai-step-desc"><?php esc_html_e('Enter Azure OpenAI endpoint URL', 'schema-genie-ai'); ?></div>
+                    </div>
+                    <div class="sgai-step <?php echo $step2_done ? 'sgai-step-done' : ($step1_done && !$step2_done ? 'sgai-step-active' : ''); ?>">
+                        <div class="sgai-step-num"><?php echo $step2_done ? '✓' : '2'; ?></div>
+                        <div class="sgai-step-title"><?php esc_html_e('Add API Key & Test', 'schema-genie-ai'); ?></div>
+                        <div class="sgai-step-desc"><?php esc_html_e('Enter key → Test Connection → Save', 'schema-genie-ai'); ?></div>
+                    </div>
+                    <div class="sgai-step <?php echo $step3_done ? 'sgai-step-done' : ($step2_done && !$step3_done ? 'sgai-step-active' : ''); ?>">
+                        <div class="sgai-step-num"><?php echo $step3_done ? '✓' : '3'; ?></div>
+                        <div class="sgai-step-title"><?php esc_html_e('Generate Schemas', 'schema-genie-ai'); ?></div>
+                        <div class="sgai-step-desc"><?php esc_html_e('Go to any post → click Generate', 'schema-genie-ai'); ?></div>
+                    </div>
+                </div>
+            </div>
+            <?php endif; ?>
+
+            <!-- Dashboard Stats -->
+            <div class="sgai-cards">
+                <div class="sgai-card sgai-card-success">
+                    <div class="sgai-card-icon">✅</div>
+                    <div class="sgai-card-value"><?php echo esc_html($total_schemas); ?></div>
+                    <div class="sgai-card-label"><?php esc_html_e('Schemas Generated', 'schema-genie-ai'); ?></div>
+                </div>
+                <div class="sgai-card sgai-card-pending">
+                    <div class="sgai-card-icon">⏳</div>
+                    <div class="sgai-card-value"><?php echo esc_html($posts_remaining); ?></div>
+                    <div class="sgai-card-label"><?php esc_html_e('Posts Remaining', 'schema-genie-ai'); ?></div>
+                </div>
+                <div class="sgai-card sgai-card-error">
+                    <div class="sgai-card-icon">❌</div>
+                    <div class="sgai-card-value"><?php echo esc_html($total_errors); ?></div>
+                    <div class="sgai-card-label"><?php esc_html_e('Errors', 'schema-genie-ai'); ?></div>
+                </div>
+                <?php if ($has_rank_math): ?>
+                <div class="sgai-card sgai-card-info">
+                    <div class="sgai-card-icon">🔗</div>
+                    <div class="sgai-card-value"><?php echo esc_html($rm_synced); ?></div>
+                    <div class="sgai-card-label"><?php esc_html_e('Synced to Rank Math', 'schema-genie-ai'); ?></div>
+                </div>
+                <?php endif; ?>
+            </div>
+
+            <!-- Coverage Progress -->
+            <?php if ($total_posts > 0): ?>
+            <div style="background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px 24px; margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span style="font-size: 13px; font-weight: 600; color: #1d2327;">
+                        📊 <?php esc_html_e('Schema Coverage', 'schema-genie-ai'); ?>
+                    </span>
+                    <span style="font-size: 13px; font-weight: 700; color: <?php echo $coverage_pct >= 80 ? '#00a32a' : ($coverage_pct >= 40 ? '#dba617' : '#d63638'); ?>;">
+                        <?php echo esc_html($coverage_pct); ?>%
+                    </span>
+                </div>
+                <div class="sgai-coverage-bar">
+                    <div class="sgai-coverage-fill" style="width: <?php echo esc_attr($coverage_pct); ?>%; background: <?php echo $coverage_pct >= 80 ? '#00a32a' : ($coverage_pct >= 40 ? '#dba617' : '#d63638'); ?>;"></div>
+                </div>
+                <span style="font-size: 11px; color: #888;">
+                    <?php printf(
+                        esc_html__('%d of %d published posts have schema markup (%d pages also supported)', 'schema-genie-ai'),
+                        $total_schemas, $total_posts, $total_pages
+                    ); ?>
+                </span>
+            </div>
+            <?php endif; ?>
+
+            <!-- Quick Start Guide -->
+            <div class="sgai-guide">
+                <h3>📖 <?php esc_html_e('How to Use Schema Genie AI', 'schema-genie-ai'); ?></h3>
+                <ol>
+                    <li>
+                        <strong><?php esc_html_e('First:', 'schema-genie-ai'); ?></strong>
+                        <?php esc_html_e('Fill in the Azure OpenAI Endpoint and API Version below, then click', 'schema-genie-ai'); ?>
+                        <strong><?php esc_html_e('Save Settings', 'schema-genie-ai'); ?></strong>.
+                    </li>
+                    <li>
+                        <strong><?php esc_html_e('Then:', 'schema-genie-ai'); ?></strong>
+                        <?php esc_html_e('Enter your API Key → click', 'schema-genie-ai'); ?>
+                        <strong><?php esc_html_e('Test Connection', 'schema-genie-ai'); ?></strong>
+                        → <?php esc_html_e('if successful, click', 'schema-genie-ai'); ?>
+                        <strong><?php esc_html_e('Save Settings', 'schema-genie-ai'); ?></strong>
+                        <?php esc_html_e('again.', 'schema-genie-ai'); ?>
+                    </li>
+                    <li>
+                        <strong><?php esc_html_e('Generate:', 'schema-genie-ai'); ?></strong>
+                        <?php esc_html_e('Edit any post/page → find "Schema Genie AI" box in the sidebar → click', 'schema-genie-ai'); ?>
+                        <strong><?php esc_html_e('Generate Schema', 'schema-genie-ai'); ?></strong>.
+                    </li>
+                    <li>
+                        <strong><?php esc_html_e('Verify:', 'schema-genie-ai'); ?></strong>
+                        <?php esc_html_e('View your post on the frontend → Right Click → View Page Source → search for', 'schema-genie-ai'); ?>
+                        <code>schema-genie-ai</code>.
+                        <?php if ($has_rank_math): ?>
+                        <br><?php esc_html_e('Or check the Rank Math → Schema tab on each post.', 'schema-genie-ai'); ?>
+                        <?php endif; ?>
+                    </li>
+                </ol>
+            </div>
+
+            <!-- Settings Form -->
+            <div class="sgai-section-box">
+                <form method="post" action="options.php">
+                    <?php
+                    settings_fields(self::OPTION_GROUP);
+                    do_settings_sections(self::PAGE_SLUG);
+                    submit_button(__('Save Settings', 'schema-genie-ai'));
+                    ?>
+                </form>
+            </div>
 
             <!-- Bulk Generation Tool -->
-            <hr>
-            <h2><?php esc_html_e('Bulk Schema Generation', 'schema-genie-ai'); ?></h2>
-            <p><?php esc_html_e('Generate schemas for all published posts that do not have one yet.', 'schema-genie-ai'); ?></p>
-            <button type="button" id="sgai-bulk-generate" class="button button-secondary">
-                <?php esc_html_e('Generate All Missing Schemas', 'schema-genie-ai'); ?>
-            </button>
-            <div id="sgai-bulk-progress" style="margin-top: 10px; display: none;">
-                <div style="background: #eee; height: 24px; border-radius: 4px; overflow: hidden;">
-                    <div id="sgai-bulk-bar" style="background: #2271b1; height: 100%; width: 0%; transition: width 0.3s;"></div>
+            <div class="sgai-section-box">
+                <h2>⚡ <?php esc_html_e('Bulk Schema Generation', 'schema-genie-ai'); ?></h2>
+                <p style="color: #666; font-size: 13px;">
+                    <?php esc_html_e('Generate schemas for all published posts that do not have one yet. Each post will call the Azure OpenAI API and use tokens.', 'schema-genie-ai'); ?>
+                </p>
+                <?php if ($posts_remaining > 0): ?>
+                <p style="font-size: 13px;">
+                    <strong><?php echo esc_html($posts_remaining); ?></strong> <?php esc_html_e('posts still need schemas.', 'schema-genie-ai'); ?>
+                </p>
+                <?php endif; ?>
+                <button type="button" id="sgai-bulk-generate" class="button button-primary" <?php echo !$has_api_key ? 'disabled style="opacity:0.5;"' : ''; ?>>
+                    <?php esc_html_e('Generate All Missing Schemas', 'schema-genie-ai'); ?>
+                </button>
+                <?php if (!$has_api_key): ?>
+                    <p style="color: #d63638; font-size: 12px; margin-top: 6px;">
+                        ⚠ <?php esc_html_e('Configure and save your API key first.', 'schema-genie-ai'); ?>
+                    </p>
+                <?php endif; ?>
+                <div id="sgai-bulk-progress" style="margin-top: 12px; display: none;">
+                    <div style="background: #eee; height: 24px; border-radius: 4px; overflow: hidden;">
+                        <div id="sgai-bulk-bar" style="background: #2271b1; height: 100%; width: 0%; transition: width 0.3s;"></div>
+                    </div>
+                    <p id="sgai-bulk-status" style="font-size: 13px; color: #666;"></p>
                 </div>
-                <p id="sgai-bulk-status"></p>
             </div>
 
             <script>

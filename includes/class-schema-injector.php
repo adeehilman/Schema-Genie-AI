@@ -3,8 +3,9 @@
  * Schema Injector — outputs JSON-LD in the wp_head.
  *
  * Strategy:
- * 1. If Rank Math is active → inject via rank_math/json_ld filter (merges into Rank Math's @graph)
- * 2. If Rank Math is NOT active → inject standalone <script type="application/ld+json"> via wp_head
+ * 1. If Rank Math is active AND schemas are synced to Rank Math → let Rank Math handle output
+ * 2. If Rank Math is active but NOT synced → inject via rank_math/json_ld filter
+ * 3. If Rank Math is NOT active → inject standalone <script type="application/ld+json"> via wp_head
  */
 defined('ABSPATH') || exit;
 
@@ -12,6 +13,8 @@ class Schema_Genie_AI_Injector {
 
     public function __construct() {
         if ($this->is_rank_math_active()) {
+            // When synced to Rank Math, Rank Math outputs our schemas from its own meta.
+            // We still add the filter as a fallback for posts not yet synced.
             add_filter('rank_math/json_ld', [$this, 'inject_via_rank_math'], 99, 2);
         } else {
             add_action('wp_head', [$this, 'inject_standalone'], 1);
@@ -22,6 +25,13 @@ class Schema_Genie_AI_Injector {
         return class_exists('RankMath') || defined('RANK_MATH_VERSION');
     }
 
+    /**
+     * Check if schemas for a post have been synced to Rank Math's meta.
+     */
+    public static function is_synced_to_rank_math(int $post_id): bool {
+        return get_post_meta($post_id, '_schema_genie_ai_rm_synced', true) === '1';
+    }
+
     public function inject_via_rank_math(array $data, $jsonld): array {
         $supported = Schema_Genie_AI_Meta_Box::get_supported_post_types();
         if (!is_singular($supported)) return $data;
@@ -29,6 +39,13 @@ class Schema_Genie_AI_Injector {
         $post_id = get_the_ID();
         if (!$post_id) return $data;
 
+        // If already synced to Rank Math meta, Rank Math handles the output.
+        // We only need to remove duplicate types it generates natively.
+        if (self::is_synced_to_rank_math($post_id)) {
+            return $data;
+        }
+
+        // Fallback: inject via filter for posts not yet synced
         $schema_data = get_post_meta($post_id, '_schema_genie_ai_data', true);
         if (empty($schema_data)) return $data;
 

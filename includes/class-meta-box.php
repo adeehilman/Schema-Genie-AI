@@ -109,7 +109,13 @@ class Schema_Genie_AI_Meta_Box {
             </p>
 
             <?php if ($token_info): ?>
-                <p style="color: #666; font-size: 11px; margin: 0 0 10px;"><?php echo esc_html($token_info); ?></p>
+                <p style="color: #666; font-size: 11px; margin: 0 0 5px;"><?php echo esc_html($token_info); ?></p>
+            <?php endif; ?>
+
+            <?php if ($has_data && Schema_Genie_AI_Injector::is_synced_to_rank_math($post->ID)): ?>
+                <p style="color: #2271b1; font-size: 11px; margin: 0 0 10px; font-weight: 500;">✓ <?php esc_html_e('Synced to Rank Math', 'schema-genie-ai'); ?></p>
+            <?php elseif ($has_data && (class_exists('RankMath') || defined('RANK_MATH_VERSION'))): ?>
+                <p style="color: #dba617; font-size: 11px; margin: 0 0 10px;">⚠ <?php esc_html_e('Not synced — click Regenerate to sync', 'schema-genie-ai'); ?></p>
             <?php endif; ?>
 
             <!-- Buttons -->
