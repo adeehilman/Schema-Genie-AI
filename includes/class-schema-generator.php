@@ -68,106 +68,14 @@ class Schema_Genie_AI_Generator {
         update_post_meta($post_id, '_schema_genie_ai_generated', current_time('mysql'));
         update_post_meta($post_id, '_schema_genie_ai_status', 'success');
 
-        // Step 7: Sync to Rank Math Schema UI (if Rank Math is active)
-        $this->sync_to_rank_math($post_id, $final_graph);
+        // Clean up any old Rank Math sync data from previous plugin versions
+        // (writing to rank_math_schema causes JS crashes in Rank Math's admin)
+        delete_post_meta($post_id, 'rank_math_schema');
+        delete_post_meta($post_id, '_schema_genie_ai_rm_synced');
 
         return $final_graph;
     }
 
-    /**
-     * Sync generated schemas to Rank Math's schema storage.
-     *
-     * This writes to the 'rank_math_schema' post meta key so that
-     * schemas appear in Rank Math's Schema tab UI.
-     */
-    private function sync_to_rank_math(int $post_id, array $graph): void {
-        if (!class_exists('RankMath') && !defined('RANK_MATH_VERSION')) {
-            return;
-        }
-
-        // Only sync schema types that Rank Math's UI can display and edit.
-        // Organization, Person, Place, WebSite, ImageObject are handled by Rank Math's
-        // site-wide settings and should NOT be stored per-post.
-        $syncable_types = [
-            'Article', 'NewsArticle', 'BlogPosting',
-            'WebPage', 'FAQPage',
-            'HowTo',
-            'LegalService',
-        ];
-
-        $rank_math_schemas = [];
-        $is_first = true;
-
-        foreach ($graph as $entity) {
-            if (!isset($entity['@type'])) continue;
-
-            $types = is_array($entity['@type']) ? $entity['@type'] : [$entity['@type']];
-            $primary_type = $types[0];
-
-            // Check if this type should be synced to Rank Math
-            $should_sync = false;
-            foreach ($types as $t) {
-                if (in_array($t, $syncable_types, true)) {
-                    $should_sync = true;
-                    break;
-                }
-            }
-            if (!$should_sync) continue;
-
-            $rm_schema = $this->convert_to_rank_math_format($entity, $primary_type, $is_first);
-
-            // Rank Math uses keys like "schema-<unique_id>"
-            $unique_id = substr(md5($primary_type . $post_id . wp_rand()), 0, 6);
-            $key = 'schema-' . $unique_id;
-
-            $rank_math_schemas[$key] = $rm_schema;
-            $is_first = false;
-        }
-
-        if (!empty($rank_math_schemas)) {
-            update_post_meta($post_id, 'rank_math_schema', $rank_math_schemas);
-            update_post_meta($post_id, '_schema_genie_ai_rm_synced', '1');
-        }
-    }
-
-    /**
-     * Convert a JSON-LD entity to Rank Math's internal schema format.
-     *
-     * Rank Math expects each schema to be a flat-ish structure with a
-     * 'metadata' key at the top level. Nested sub-objects must NOT have
-     * their own 'metadata' key — Rank Math's JS iterates deeply and
-     * expects 'metadata.isPrimary' only at the top level.
-     */
-    private function convert_to_rank_math_format(array $entity, string $primary_type, bool $is_primary): array {
-        // Map our types to Rank Math's known schema type identifiers
-        $rm_type_map = [
-            'NewsArticle' => 'Article',
-            'BlogPosting' => 'Article',
-            'Article'     => 'Article',
-            'WebPage'     => 'WebPage',
-            'FAQPage'     => 'FAQPage',
-            'HowTo'       => 'HowTo',
-            'LegalService' => 'LocalBusiness',
-        ];
-
-        $rm_type = $rm_type_map[$primary_type] ?? $primary_type;
-
-        // Rank Math requires a 'metadata' block for its UI to render
-        $entity['metadata'] = [
-            'title'     => $rm_type,
-            'type'      => 'template',
-            'shortcode' => 'schema-genie-ai-' . strtolower(sanitize_key($primary_type)),
-            'isPrimary' => $is_primary,
-        ];
-
-        // Remove @context if present (Rank Math adds it)
-        unset($entity['@context']);
-
-        // Remove @id fields — Rank Math doesn't use them in its internal format
-        unset($entity['@id']);
-
-        return $entity;
-    }
 
     /**
      * Extract structured data from the article.

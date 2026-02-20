@@ -267,9 +267,7 @@ class Schema_Genie_AI_Settings {
         $total_pages = (int) $wpdb->get_var(
             "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'page' AND post_status = 'publish'"
         );
-        $rm_synced = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = '_schema_genie_ai_rm_synced' AND meta_value = '1'"
-        );
+
 
         // Setup status checks
         $has_endpoint = !empty(get_option('schema_genie_ai_azure_endpoint', ''));
@@ -420,13 +418,7 @@ class Schema_Genie_AI_Settings {
                     <div class="sgai-card-value"><?php echo esc_html($total_errors); ?></div>
                     <div class="sgai-card-label"><?php esc_html_e('Errors', 'schema-genie-ai'); ?></div>
                 </div>
-                <?php if ($has_rank_math): ?>
-                <div class="sgai-card sgai-card-info">
-                    <div class="sgai-card-icon">🔗</div>
-                    <div class="sgai-card-value"><?php echo esc_html($rm_synced); ?></div>
-                    <div class="sgai-card-label"><?php esc_html_e('Synced to Rank Math', 'schema-genie-ai'); ?></div>
-                </div>
-                <?php endif; ?>
+
             </div>
 
             <!-- Coverage Progress -->
