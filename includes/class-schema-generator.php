@@ -76,6 +76,13 @@ class Schema_Genie_AI_Generator {
 
     /**
      * Sync generated schemas to Rank Math's schema storage.
+     *
+     * Rank Math's DB::get_schemas() queries:
+     *   SELECT meta_id, meta_value FROM wp_postmeta
+     *   WHERE post_id = ? AND meta_key LIKE 'rank_math_schema%'
+     *
+     * Each row is treated as a separate schema entity keyed by schema-{meta_id}.
+     * So we must store each entity as its own add_post_meta() row.
      */
     private function sync_to_rank_math(int $post_id, array $graph): void {
         if (!class_exists('RankMath') && !defined('RANK_MATH_VERSION')) {
@@ -89,7 +96,14 @@ class Schema_Genie_AI_Generator {
             'LegalService',
         ];
 
-        $rank_math_schemas = [];
+        // Types to skip — Rank Math generates these natively
+        $skip_types = ['Place', 'WebSite', 'ImageObject', 'Person', 'Organization'];
+
+        // Delete ALL existing rank_math_schema rows first
+        delete_post_meta($post_id, 'rank_math_schema');
+        // Clean up old sync flag from previous versions
+        delete_post_meta($post_id, '_schema_genie_ai_rm_synced');
+
         $is_first = true;
 
         foreach ($graph as $entity) {
@@ -98,6 +112,17 @@ class Schema_Genie_AI_Generator {
             $types = is_array($entity['@type']) ? $entity['@type'] : [$entity['@type']];
             $primary_type = $types[0];
 
+            // Skip native types
+            $should_skip = false;
+            foreach ($types as $t) {
+                if (in_array($t, $skip_types, true)) {
+                    $should_skip = true;
+                    break;
+                }
+            }
+            if ($should_skip) continue;
+
+            // Check if syncable
             $should_sync = false;
             foreach ($types as $t) {
                 if (in_array($t, $syncable_types, true)) {
@@ -107,31 +132,22 @@ class Schema_Genie_AI_Generator {
             }
             if (!$should_sync) continue;
 
-            $rm_schema = $this->convert_to_rank_math_format($entity, $primary_type, $is_first);
+            $rm_entity = $this->convert_to_rank_math_format($entity, $primary_type, $is_first);
 
-            $unique_id = substr(md5($primary_type . $post_id . wp_rand()), 0, 6);
-            $rank_math_schemas['schema-' . $unique_id] = $rm_schema;
+            // Each entity = separate meta row
+            add_post_meta($post_id, 'rank_math_schema', $rm_entity);
             $is_first = false;
-        }
-
-        // Always delete first to clear stale/corrupted data from previous versions
-        delete_post_meta($post_id, 'rank_math_schema');
-
-        if (!empty($rank_math_schemas)) {
-            update_post_meta($post_id, 'rank_math_schema', $rank_math_schemas);
         }
     }
 
     /**
      * Convert a JSON-LD entity to Rank Math's internal schema format.
      *
-     * CRITICAL: Rank Math's JS uses lodash mapValues to iterate EVERY property
-     * of each schema object. For each nested object value, it accesses
-     * value.metadata.isPrimary. If ANY nested object doesn't have 'metadata',
-     * it crashes with: TypeError: Cannot read properties of undefined (reading 'isPrimary')
-     *
-     * Solution: Recursively add 'metadata' with 'isPrimary: false' to EVERY
-     * nested object in the schema tree. Only the top-level gets isPrimary: true.
+     * Rank Math expects each schema entity to have:
+     * - @type: string
+     * - metadata: { title, type, shortcode, isPrimary }
+     * - Flat scalar properties (headline, description, etc.)
+     * - Nested objects (author, publisher) are kept as-is — they do NOT need metadata
      */
     private function convert_to_rank_math_format(array $entity, string $primary_type, bool $is_primary): array {
         $rm_type_map = [
@@ -146,17 +162,17 @@ class Schema_Genie_AI_Generator {
 
         $rm_type = $rm_type_map[$primary_type] ?? $primary_type;
 
-        // Remove fields Rank Math doesn't use
+        // Remove JSON-LD structural fields Rank Math doesn't use
         unset($entity['@context'], $entity['@id']);
 
-        // Recursively add metadata to ALL nested objects
-        $entity = $this->add_metadata_recursive($entity);
+        // Flatten the entity for Rank Math storage
+        $entity = $this->flatten_for_rank_math($entity);
 
-        // Set the top-level metadata (overrides the one added by recursive function)
+        // Set the required metadata block
         $entity['metadata'] = [
             'title'     => $rm_type,
             'type'      => 'template',
-            'shortcode' => 'schema-genie-ai-' . strtolower(sanitize_key($primary_type)),
+            'shortcode' => uniqid('s-'),
             'isPrimary' => $is_primary,
         ];
 
@@ -164,43 +180,35 @@ class Schema_Genie_AI_Generator {
     }
 
     /**
-     * Recursively add 'metadata' to every nested associative array (object).
-     * This prevents Rank Math's JS from crashing when it deep-iterates schemas.
+     * Flatten nested objects for Rank Math storage.
+     *
+     * Keeps scalar values and simple nested objects (like author, publisher).
+     * Removes deeply nested arrays that could cause issues.
+     * Ensures all values are Rank Math compatible.
      */
-    private function add_metadata_recursive(array $data): array {
-        foreach ($data as $key => &$value) {
-            if ($key === 'metadata') continue; // Don't recurse into metadata itself
+    private function flatten_for_rank_math(array $entity): array {
+        $result = [];
 
-            if (is_array($value)) {
-                // Check if this is an associative array (object) or a sequential array (list)
+        foreach ($entity as $key => $value) {
+            if ($key === '@context' || $key === '@id') continue;
+
+            if (is_scalar($value) || is_null($value)) {
+                // Keep scalar values as-is
+                $result[$key] = (string) $value;
+            } elseif (is_array($value)) {
                 if ($this->is_assoc_array($value)) {
-                    // It's an object — recurse and add metadata
-                    $value = $this->add_metadata_recursive($value);
-                    if (!isset($value['metadata'])) {
-                        $value['metadata'] = [
-                            'type'      => 'template',
-                            'isPrimary' => false,
-                        ];
-                    }
+                    // Nested object (e.g. author, publisher) — keep as-is
+                    // Remove @id from nested objects
+                    unset($value['@id']);
+                    $result[$key] = $value;
                 } else {
-                    // It's a sequential array (list of items, e.g. FAQ questions)
-                    foreach ($value as $idx => &$item) {
-                        if (is_array($item) && $this->is_assoc_array($item)) {
-                            $item = $this->add_metadata_recursive($item);
-                            if (!isset($item['metadata'])) {
-                                $item['metadata'] = [
-                                    'type'      => 'template',
-                                    'isPrimary' => false,
-                                ];
-                            }
-                        }
-                    }
-                    unset($item);
+                    // Sequential array — keep if items are scalars or simple objects
+                    $result[$key] = $value;
                 }
             }
         }
-        unset($value);
-        return $data;
+
+        return $result;
     }
 
     /**

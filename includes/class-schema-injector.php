@@ -25,15 +25,16 @@ class Schema_Genie_AI_Injector {
 
     /**
      * Check if schemas for a post have been synced to Rank Math's meta.
+     * Checks for existence of rank_math_schema rows in wp_postmeta.
      */
     public static function is_synced_to_rank_math(int $post_id): bool {
-        $rm_schemas = get_post_meta($post_id, 'rank_math_schema', true);
-        return !empty($rm_schemas) && is_array($rm_schemas);
+        $schemas = get_post_meta($post_id, 'rank_math_schema');
+        return !empty($schemas) && is_array($schemas);
     }
 
     /**
      * Inject via Rank Math's json_ld filter.
-     * If synced to rank_math_schema, Rank Math handles output — we just return.
+     * If synced to rank_math_schema rows, Rank Math handles output via DB::get_schemas().
      * If not synced, we inject our schemas into the filter data.
      */
     public function inject_via_rank_math(array $data, $jsonld): array {
@@ -43,7 +44,7 @@ class Schema_Genie_AI_Injector {
         $post_id = get_the_ID();
         if (!$post_id) return $data;
 
-        // If synced to Rank Math meta, Rank Math handles the output
+        // If synced to Rank Math meta rows, Rank Math handles the output
         if (self::is_synced_to_rank_math($post_id)) {
             return $data;
         }
@@ -55,13 +56,16 @@ class Schema_Genie_AI_Injector {
         $schemas = json_decode($schema_data, true);
         if (!is_array($schemas)) return $data;
 
+        // Collect our schema types so we can remove Rank Math's duplicates
         $our_types = [];
         foreach ($schemas as $schema) {
+            if (!isset($schema['@type'])) continue;
             $types = is_array($schema['@type']) ? $schema['@type'] : [$schema['@type']];
             foreach ($types as $t) $our_types[] = $t;
         }
 
-        $types_to_replace = ['WebPage', 'Article', 'NewsArticle'];
+        // Remove Rank Math's default schemas that we're replacing
+        $types_to_replace = ['WebPage', 'Article', 'NewsArticle', 'BlogPosting'];
         foreach ($data as $key => $entity) {
             if (!isset($entity['@type'])) continue;
             $entity_types = is_array($entity['@type']) ? $entity['@type'] : [$entity['@type']];
@@ -73,6 +77,7 @@ class Schema_Genie_AI_Injector {
             }
         }
 
+        // Add our schemas
         foreach ($schemas as $index => $schema) {
             $type_key = is_array($schema['@type']) ? implode('_', $schema['@type']) : $schema['@type'];
             $data['sgai_' . sanitize_key($type_key) . '_' . $index] = $schema;
