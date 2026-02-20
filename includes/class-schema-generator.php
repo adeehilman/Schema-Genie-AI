@@ -140,8 +140,31 @@ class Schema_Genie_AI_Generator {
 
             // Each entity = separate meta row
             add_post_meta($post_id, 'rank_math_schema', $rm_entity);
+
+            // Track the primary type for the posts list column
+            if ($is_first) {
+                $rm_type_for_snippet = strtolower($this->get_rm_type($primary_type));
+                update_post_meta($post_id, 'rank_math_rich_snippet', $rm_type_for_snippet);
+            }
+
             $is_first = false;
         }
+    }
+
+    /**
+     * Get Rank Math's type name for a given schema type.
+     */
+    private function get_rm_type(string $type): string {
+        $map = [
+            'NewsArticle'  => 'Article',
+            'BlogPosting'  => 'Article',
+            'Article'      => 'Article',
+            'WebPage'      => 'WebPage',
+            'FAQPage'      => 'FAQPage',
+            'HowTo'        => 'HowTo',
+            'LegalService' => 'LocalBusiness',
+        ];
+        return $map[$type] ?? $type;
     }
 
     /**

@@ -123,6 +123,7 @@ class Schema_Genie_AI_Plugin {
         // Also clear Rank Math schema if it was synced by us
         if (class_exists('RankMath') || defined('RANK_MATH_VERSION')) {
             delete_post_meta($post_id, 'rank_math_schema');
+            delete_post_meta($post_id, 'rank_math_rich_snippet');
         }
 
         wp_send_json_success([
