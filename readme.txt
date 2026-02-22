@@ -4,7 +4,7 @@ Tags: schema, json-ld, seo, structured-data, ai, schema-markup
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.0.0
+Stable tag: 1.1.4
 License: GPLv2 or later
 
 AI-powered JSON-LD structured data generator for WordPress. Automatically creates rich schema markup using Azure OpenAI.
@@ -33,6 +33,10 @@ Schema Genie AI is an intelligent JSON-LD schema markup generator for WordPress.
 5. Open any post and click "Generate Schema" in the sidebar
 
 == Changelog ==
+
+= 1.1.4 =
+* Removed openingHours, location @id, and image @id from Organization schema
+* FAQPage schema now generated aggressively on every article
 
 = 1.0.0 =
 * Initial release

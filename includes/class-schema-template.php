@@ -70,12 +70,7 @@ class Schema_Genie_AI_Template {
                 'width'      => 420,
                 'height'     => 88,
             ],
-            'openingHours' => [
-                'Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday 09:00-17:00',
-            ],
             'vatID'     => 'DE450779488',
-            'location'  => ['@id' => self::SITE_URL . '/#place'],
-            'image'     => ['@id' => self::SITE_URL . '/#logo'],
             'telephone' => '+49-30-814-5909-00',
         ];
 

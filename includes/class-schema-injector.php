@@ -25,11 +25,16 @@ class Schema_Genie_AI_Injector {
 
     /**
      * Check if schemas for a post have been synced to Rank Math's meta.
-     * Checks for existence of rank_math_schema rows in wp_postmeta.
+     * Checks for existence of rank_math_schema_* rows in wp_postmeta.
      */
     public static function is_synced_to_rank_math(int $post_id): bool {
-        $schemas = get_post_meta($post_id, 'rank_math_schema');
-        return !empty($schemas) && is_array($schemas);
+        global $wpdb;
+        $count = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key LIKE %s",
+            $post_id,
+            'rank_math_schema_%'
+        ));
+        return $count > 0;
     }
 
     /**

@@ -99,8 +99,13 @@ class Schema_Genie_AI_Generator {
         // Types to skip — Rank Math generates these natively
         $skip_types = ['Place', 'WebSite', 'ImageObject', 'Person', 'Organization'];
 
-        // Delete ALL existing rank_math_schema rows first
-        delete_post_meta($post_id, 'rank_math_schema');
+        // Delete ALL existing rank_math_schema_* rows (ours + old format)
+        global $wpdb;
+        $wpdb->query($wpdb->prepare(
+            "DELETE FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key LIKE %s",
+            $post_id,
+            'rank_math_schema%'
+        ));
         // Clean up old sync flag from previous versions
         delete_post_meta($post_id, '_schema_genie_ai_rm_synced');
 
@@ -138,17 +143,75 @@ class Schema_Genie_AI_Generator {
 
             $rm_entity = $this->convert_to_rank_math_format($entity, $primary_type, $is_first);
 
-            // Each entity = separate meta row
-            add_post_meta($post_id, 'rank_math_schema', $rm_entity);
-
-            // Track the primary type for the posts list column
-            if ($is_first) {
-                $rm_type_for_snippet = strtolower($this->get_rm_type($primary_type));
-                update_post_meta($post_id, 'rank_math_rich_snippet', $rm_type_for_snippet);
-            }
+            // Use rank_math_schema_TYPE as meta key — required for:
+            // 1. DB::get_schemas() which uses LIKE 'rank_math_schema%'
+            // 2. Posts list column which checks starts_with('rank_math_schema_', $key)
+            $rm_type = $this->get_rm_type($primary_type);
+            $meta_key = 'rank_math_schema_' . $rm_type;
+            add_post_meta($post_id, $meta_key, $rm_entity);
 
             $is_first = false;
         }
+
+        // Auto-optimize Rank Math SEO meta fields if empty
+        $this->optimize_rank_math_seo_meta($post_id, $graph);
+    }
+
+    /**
+     * Auto-fill Rank Math SEO meta fields to boost the SEO score.
+     *
+     * Only sets fields that are EMPTY — never overwrites user's custom values.
+     * Safe optimizations:
+     * - rank_math_description: Auto-generate from schema description + focus keyword
+     */
+    private function optimize_rank_math_seo_meta(int $post_id, array $graph): void {
+        // Get the focus keyword (if set by user)
+        $focus_keyword = get_post_meta($post_id, 'rank_math_focus_keyword', true);
+
+        // Auto-fill SEO Meta Description if empty
+        $existing_desc = get_post_meta($post_id, 'rank_math_description', true);
+        if (empty($existing_desc)) {
+            $description = $this->extract_description_from_graph($graph);
+            if ($description) {
+                // If there's a focus keyword, make sure it's included
+                if ($focus_keyword && stripos($description, $focus_keyword) === false) {
+                    // Append focus keyword naturally
+                    $description = $description . ' ' . $focus_keyword . '.';
+                }
+                // Rank Math recommends 120-160 chars
+                if (strlen($description) > 160) {
+                    $description = substr($description, 0, 157) . '...';
+                }
+                update_post_meta($post_id, 'rank_math_description', sanitize_text_field($description));
+            }
+        }
+    }
+
+    /**
+     * Extract the best description from the schema graph.
+     */
+    private function extract_description_from_graph(array $graph): string {
+        foreach ($graph as $entity) {
+            if (!isset($entity['@type'])) continue;
+            $types = is_array($entity['@type']) ? $entity['@type'] : [$entity['@type']];
+
+            // Prefer Article/NewsArticle description
+            $article_types = ['Article', 'NewsArticle', 'BlogPosting'];
+            foreach ($types as $t) {
+                if (in_array($t, $article_types, true) && !empty($entity['description'])) {
+                    return $entity['description'];
+                }
+            }
+        }
+
+        // Fallback: any entity with a description
+        foreach ($graph as $entity) {
+            if (!empty($entity['description'])) {
+                return $entity['description'];
+            }
+        }
+
+        return '';
     }
 
     /**
@@ -328,13 +391,16 @@ CRITICAL RULES:
 
 SCHEMA TYPES TO GENERATE:
 
-A) "WebPage" enrichment object:
-   - If the article contains Q&A-style content (questions and answers), return a WebPage object with:
-     - "@type": ["WebPage", "FAQPage"]
-     - "mainEntity": array of Question objects with acceptedAnswer
-   - Extract REAL questions from the content. Do NOT fabricate questions.
-   - If no Q&A content exists, return "@type": "WebPage" without FAQ.
-   - Include ONLY @type and mainEntity (if FAQ). Other WebPage fields are handled separately.
+A) "WebPage" enrichment object — ALWAYS try to generate FAQPage:
+   - You MUST attempt to return "@type": ["WebPage", "FAQPage"] with "mainEntity" on EVERY article.
+   - Extract FAQ questions from ANY of these sources (in priority order):
+     1. Explicit Q&A content (questions with answers in the text)
+     2. Section headings that are questions or can be naturally rephrased as questions
+     3. Key legal topics discussed that people commonly ask about
+     4. Important definitions or explanations that answer common legal questions
+   - Generate at least 3-5 Question+Answer pairs per article.
+   - Answers must be factual and derived from the actual article content. Do NOT invent information.
+   - Only fall back to plain "@type": "WebPage" (without FAQ) if the article is extremely short or has no informational content at all.
 
 B) "LegalService" entities (one per city: {$cities_list}):
    - ONLY generate these if the article discusses specific legal services, legal practice areas, or attorney services.
