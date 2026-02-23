@@ -13,7 +13,7 @@
 defined('ABSPATH') || exit;
 
 // Plugin constants
-define('SCHEMA_GENIE_AI_VERSION', '1.1.12');
+define('SCHEMA_GENIE_AI_VERSION', '1.2.0');
 define('SCHEMA_GENIE_AI_PATH', plugin_dir_path(__FILE__));
 define('SCHEMA_GENIE_AI_URL', plugin_dir_url(__FILE__));
 
@@ -24,6 +24,7 @@ require_once SCHEMA_GENIE_AI_PATH . 'includes/class-schema-template.php';
 require_once SCHEMA_GENIE_AI_PATH . 'includes/class-schema-generator.php';
 require_once SCHEMA_GENIE_AI_PATH . 'includes/class-meta-box.php';
 require_once SCHEMA_GENIE_AI_PATH . 'includes/class-schema-injector.php';
+require_once SCHEMA_GENIE_AI_PATH . 'includes/class-request-log.php';
 
 /**
  * Main plugin class — orchestrates all components.
@@ -78,7 +79,8 @@ class Schema_Genie_AI_Plugin {
 
         try {
             $generator = new Schema_Genie_AI_Generator();
-            $result = $generator->generate($post_id);
+            $trigger = isset($_POST['trigger_type']) ? sanitize_key($_POST['trigger_type']) : 'manual';
+            $result = $generator->generate($post_id, $trigger);
 
             wp_send_json_success([
                 'message'   => __('Schema generated successfully!', 'schema-genie-ai'),
@@ -180,7 +182,9 @@ class Schema_Genie_AI_Plugin {
         if (wp_is_post_revision($post_id)) return;
         if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
         $supported = Schema_Genie_AI_Meta_Box::get_supported_post_types();
+        $enabled   = Schema_Genie_AI_Settings::get_enabled_post_types();
         if (!in_array($post->post_type, $supported, true)) return;
+        if (!in_array($post->post_type, $enabled, true)) return;
         if ($post->post_status !== 'publish') return;
 
         $auto = get_option('schema_genie_ai_auto_generate', '0');
@@ -202,7 +206,7 @@ class Schema_Genie_AI_Plugin {
     public function async_generate_schema(int $post_id) {
         try {
             $generator = new Schema_Genie_AI_Generator();
-            $generator->generate($post_id);
+            $generator->generate($post_id, 'cron');
         } catch (Exception $e) {
             update_post_meta($post_id, '_schema_genie_ai_status', 'error');
             update_post_meta($post_id, '_schema_genie_ai_error', $e->getMessage());
@@ -216,6 +220,9 @@ class Schema_Genie_AI_Plugin {
 
 // Activation hook
 register_activation_hook(__FILE__, function () {
+    // Create request log table
+    Schema_Genie_AI_Request_Log::create_table();
+
     // Set default options
     $defaults = [
         'schema_genie_ai_provider'          => 'azure',

@@ -24,54 +24,86 @@ class Schema_Genie_AI_Generator {
      * @return array The final merged schema graph.
      * @throws Exception On failure.
      */
-    public function generate(int $post_id): array {
+    public function generate(int $post_id, string $trigger_type = 'manual'): array {
         $post = get_post($post_id);
         if (!$post || $post->post_status !== 'publish') {
             throw new Exception(__('Post not found or not published.', 'schema-genie-ai'));
         }
 
-        // Update status to "generating"
-        update_post_meta($post_id, '_schema_genie_ai_status', 'generating');
-        delete_post_meta($post_id, '_schema_genie_ai_error');
-
-        // Step 1: Extract article data
-        $article_data = $this->extract_article_data($post);
-
-        // Step 2: Build prompts
-        $system_prompt = $this->build_system_prompt();
-        $user_prompt   = $this->build_user_prompt($article_data);
-
-        // Step 3: Call Azure OpenAI
-        $ai_response = $this->ai_client->call($system_prompt, $user_prompt);
-
-        // Store raw response for debugging
-        if (defined('WP_DEBUG') && WP_DEBUG && isset($ai_response['_raw'])) {
-            update_post_meta($post_id, '_schema_genie_ai_raw', $ai_response['_raw']);
+        // Acquire post-level lock to prevent race conditions
+        $lock_key = 'sgai_lock_' . $post_id;
+        if (get_transient($lock_key)) {
+            throw new Exception(
+                sprintf(__('Schema generation already in progress for post #%d.', 'schema-genie-ai'), $post_id)
+            );
         }
+        set_transient($lock_key, true, 120); // 2-min TTL safety net
 
-        // Store token usage
-        if (isset($ai_response['_usage'])) {
-            update_post_meta($post_id, '_schema_genie_ai_tokens', wp_json_encode($ai_response['_usage']));
+        // Start logging
+        $log_id   = Schema_Genie_AI_Request_Log::log_start($post_id, $trigger_type);
+        $start_ms = microtime(true);
+
+        try {
+            // Update status to "generating"
+            update_post_meta($post_id, '_schema_genie_ai_status', 'generating');
+            delete_post_meta($post_id, '_schema_genie_ai_error');
+
+            // Step 1: Extract article data
+            $article_data = $this->extract_article_data($post);
+
+            // Step 2: Build prompts
+            $system_prompt = $this->build_system_prompt();
+            $user_prompt   = $this->build_user_prompt($article_data);
+
+            // Step 3: Call Azure OpenAI
+            $ai_response = $this->ai_client->call($system_prompt, $user_prompt);
+
+            // Extract usage before removing internal keys
+            $usage = isset($ai_response['_usage']) ? $ai_response['_usage'] : [];
+
+            // Store raw response for debugging
+            if (defined('WP_DEBUG') && WP_DEBUG && isset($ai_response['_raw'])) {
+                update_post_meta($post_id, '_schema_genie_ai_raw', $ai_response['_raw']);
+            }
+
+            // Store token usage
+            if (!empty($usage)) {
+                update_post_meta($post_id, '_schema_genie_ai_tokens', wp_json_encode($usage));
+            }
+
+            // Remove internal keys before validation
+            unset($ai_response['_usage'], $ai_response['_raw']);
+
+            // Step 4: Validate AI output
+            $validated_schemas = $this->validate_ai_response($ai_response);
+
+            // Step 5: Merge with master template
+            $final_graph = $this->merge_schemas($post_id, $validated_schemas, $article_data);
+
+            // Step 6: Store in post meta
+            update_post_meta($post_id, '_schema_genie_ai_data', wp_json_encode($final_graph));
+            update_post_meta($post_id, '_schema_genie_ai_generated', current_time('mysql'));
+            update_post_meta($post_id, '_schema_genie_ai_status', 'success');
+
+            // Step 7: Sync to Rank Math Schema UI (if Rank Math is active)
+            $this->sync_to_rank_math($post_id, $final_graph);
+
+            // Log success
+            $duration_ms = (int) ((microtime(true) - $start_ms) * 1000);
+            Schema_Genie_AI_Request_Log::log_success($log_id, $usage, $duration_ms);
+
+            return $final_graph;
+
+        } catch (Exception $e) {
+            // Log error
+            $duration_ms = (int) ((microtime(true) - $start_ms) * 1000);
+            Schema_Genie_AI_Request_Log::log_error($log_id, $e->getMessage(), $duration_ms);
+            throw $e;
+
+        } finally {
+            // Always release lock
+            delete_transient($lock_key);
         }
-
-        // Remove internal keys before validation
-        unset($ai_response['_usage'], $ai_response['_raw']);
-
-        // Step 4: Validate AI output
-        $validated_schemas = $this->validate_ai_response($ai_response);
-
-        // Step 5: Merge with master template
-        $final_graph = $this->merge_schemas($post_id, $validated_schemas, $article_data);
-
-        // Step 6: Store in post meta
-        update_post_meta($post_id, '_schema_genie_ai_data', wp_json_encode($final_graph));
-        update_post_meta($post_id, '_schema_genie_ai_generated', current_time('mysql'));
-        update_post_meta($post_id, '_schema_genie_ai_status', 'success');
-
-        // Step 7: Sync to Rank Math Schema UI (if Rank Math is active)
-        $this->sync_to_rank_math($post_id, $final_graph);
-
-        return $final_graph;
     }
 
     /**

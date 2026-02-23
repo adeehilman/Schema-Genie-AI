@@ -1,6 +1,6 @@
 <?php
 /**
- * Settings page: API key storage (encrypted), Azure endpoint, model settings.
+ * Settings page: 3-tab admin UI — Settings, Missing Schemas, AI Request Log.
  */
 defined('ABSPATH') || exit;
 
@@ -14,9 +14,6 @@ class Schema_Genie_AI_Settings {
         add_action('admin_init', [$this, 'register_settings']);
     }
 
-    /**
-     * Add settings page under Settings menu.
-     */
     public function add_menu_page() {
         add_options_page(
             __('Schema Genie AI', 'schema-genie-ai'),
@@ -28,173 +25,99 @@ class Schema_Genie_AI_Settings {
     }
 
     /**
-     * Register all settings fields.
+     * Get enabled post types for schema detection.
      */
-    public function register_settings() {
-        // Section: Azure OpenAI
-        add_settings_section(
-            'schema_genie_ai_azure',
-            __('Azure OpenAI Configuration', 'schema-genie-ai'),
-            function () {
-                echo '<p>' . esc_html__('Configure your Azure OpenAI credentials. The API key is encrypted before storage.', 'schema-genie-ai') . '</p>';
-            },
-            self::PAGE_SLUG
-        );
-
-        // API Key (encrypted)
-        register_setting(self::OPTION_GROUP, 'schema_genie_ai_api_key', [
-            'sanitize_callback' => [$this, 'encrypt_api_key'],
-        ]);
-        add_settings_field(
-            'schema_genie_ai_api_key',
-            __('API Key', 'schema-genie-ai'),
-            [$this, 'render_api_key_field'],
-            self::PAGE_SLUG,
-            'schema_genie_ai_azure'
-        );
-
-        // Azure Endpoint
-        register_setting(self::OPTION_GROUP, 'schema_genie_ai_azure_endpoint', [
-            'sanitize_callback' => 'esc_url_raw',
-        ]);
-        add_settings_field(
-            'schema_genie_ai_azure_endpoint',
-            __('Azure Endpoint', 'schema-genie-ai'),
-            function () {
-                $val = get_option('schema_genie_ai_azure_endpoint', '');
-                echo '<input type="url" name="schema_genie_ai_azure_endpoint" value="' . esc_attr($val) . '" class="regular-text" />';
-            },
-            self::PAGE_SLUG,
-            'schema_genie_ai_azure'
-        );
-
-        // API Version
-        register_setting(self::OPTION_GROUP, 'schema_genie_ai_azure_api_version', [
-            'sanitize_callback' => 'sanitize_text_field',
-        ]);
-        add_settings_field(
-            'schema_genie_ai_azure_api_version',
-            __('API Version', 'schema-genie-ai'),
-            function () {
-                $val = get_option('schema_genie_ai_azure_api_version', '2025-01-01-preview');
-                echo '<input type="text" name="schema_genie_ai_azure_api_version" value="' . esc_attr($val) . '" class="regular-text" />';
-            },
-            self::PAGE_SLUG,
-            'schema_genie_ai_azure'
-        );
-
-        // Model / Deployment Name
-        register_setting(self::OPTION_GROUP, 'schema_genie_ai_model', [
-            'sanitize_callback' => 'sanitize_text_field',
-        ]);
-        add_settings_field(
-            'schema_genie_ai_model',
-            __('Model / Deployment Name', 'schema-genie-ai'),
-            function () {
-                $val = get_option('schema_genie_ai_model', 'gpt-4o');
-                echo '<input type="text" name="schema_genie_ai_model" value="' . esc_attr($val) . '" class="regular-text" />';
-                echo '<p class="description">' . esc_html__('Azure deployment name, e.g., gpt-4o or gpt-4o-mini', 'schema-genie-ai') . '</p>';
-            },
-            self::PAGE_SLUG,
-            'schema_genie_ai_azure'
-        );
-
-        // Section: Generation Settings
-        add_settings_section(
-            'schema_genie_ai_generation',
-            __('Generation Settings', 'schema-genie-ai'),
-            null,
-            self::PAGE_SLUG
-        );
-
-        // Temperature
-        register_setting(self::OPTION_GROUP, 'schema_genie_ai_temperature', [
-            'sanitize_callback' => function ($val) { return max(0, min(2, floatval($val))); },
-        ]);
-        add_settings_field(
-            'schema_genie_ai_temperature',
-            __('Temperature', 'schema-genie-ai'),
-            function () {
-                $val = get_option('schema_genie_ai_temperature', '0.1');
-                echo '<input type="number" name="schema_genie_ai_temperature" value="' . esc_attr($val) . '" min="0" max="2" step="0.1" class="small-text" />';
-                echo '<p class="description">' . esc_html__('Lower = more deterministic. Recommended: 0.1 for schemas.', 'schema-genie-ai') . '</p>';
-            },
-            self::PAGE_SLUG,
-            'schema_genie_ai_generation'
-        );
-
-        // Max Tokens
-        register_setting(self::OPTION_GROUP, 'schema_genie_ai_max_tokens', [
-            'sanitize_callback' => function ($val) { return max(500, min(8000, intval($val))); },
-        ]);
-        add_settings_field(
-            'schema_genie_ai_max_tokens',
-            __('Max Tokens', 'schema-genie-ai'),
-            function () {
-                $val = get_option('schema_genie_ai_max_tokens', '2000');
-                echo '<input type="number" name="schema_genie_ai_max_tokens" value="' . esc_attr($val) . '" min="500" max="8000" step="100" class="small-text" />';
-                echo '<p class="description">' . esc_html__('Max response tokens. 2000 is usually enough for schemas.', 'schema-genie-ai') . '</p>';
-            },
-            self::PAGE_SLUG,
-            'schema_genie_ai_generation'
-        );
-
-        // Timeout
-        register_setting(self::OPTION_GROUP, 'schema_genie_ai_timeout', [
-            'sanitize_callback' => function ($val) { return max(10, min(120, intval($val))); },
-        ]);
-        add_settings_field(
-            'schema_genie_ai_timeout',
-            __('Request Timeout (seconds)', 'schema-genie-ai'),
-            function () {
-                $val = get_option('schema_genie_ai_timeout', '45');
-                echo '<input type="number" name="schema_genie_ai_timeout" value="' . esc_attr($val) . '" min="10" max="120" step="5" class="small-text" />';
-            },
-            self::PAGE_SLUG,
-            'schema_genie_ai_generation'
-        );
-
-        // Content limit
-        register_setting(self::OPTION_GROUP, 'schema_genie_ai_content_limit', [
-            'sanitize_callback' => function ($val) { return max(1000, min(10000, intval($val))); },
-        ]);
-        add_settings_field(
-            'schema_genie_ai_content_limit',
-            __('Content Character Limit', 'schema-genie-ai'),
-            function () {
-                $val = get_option('schema_genie_ai_content_limit', '4000');
-                echo '<input type="number" name="schema_genie_ai_content_limit" value="' . esc_attr($val) . '" min="1000" max="10000" step="500" class="small-text" />';
-                echo '<p class="description">' . esc_html__('How many characters of article content to send to AI. Higher = more accurate but costs more tokens.', 'schema-genie-ai') . '</p>';
-            },
-            self::PAGE_SLUG,
-            'schema_genie_ai_generation'
-        );
-
-        // Auto generate
-        register_setting(self::OPTION_GROUP, 'schema_genie_ai_auto_generate', [
-            'sanitize_callback' => function ($val) { return $val ? '1' : '0'; },
-        ]);
-        add_settings_field(
-            'schema_genie_ai_auto_generate',
-            __('Auto-generate on Publish', 'schema-genie-ai'),
-            function () {
-                $val = get_option('schema_genie_ai_auto_generate', '0');
-                echo '<label><input type="checkbox" name="schema_genie_ai_auto_generate" value="1" ' . checked($val, '1', false) . ' /> ';
-                echo esc_html__('Automatically generate schema when a new post is published (first time only, async).', 'schema-genie-ai');
-                echo '</label>';
-            },
-            self::PAGE_SLUG,
-            'schema_genie_ai_generation'
-        );
+    public static function get_enabled_post_types(): array {
+        $saved = get_option('schema_genie_ai_enabled_post_types', []);
+        if (empty($saved)) {
+            $public_types = get_post_types(['public' => true], 'names');
+            unset($public_types['attachment']);
+            return array_values($public_types);
+        }
+        return $saved;
     }
 
-    /**
-     * Render the API key field (masked display).
-     */
+    public function register_settings() {
+        // Section: Azure OpenAI
+        add_settings_section('schema_genie_ai_azure', __('Azure OpenAI Configuration', 'schema-genie-ai'), function () {
+            echo '<p>' . esc_html__('Configure your Azure OpenAI credentials. The API key is encrypted before storage.', 'schema-genie-ai') . '</p>';
+        }, self::PAGE_SLUG);
+
+        register_setting(self::OPTION_GROUP, 'schema_genie_ai_api_key', ['sanitize_callback' => [$this, 'encrypt_api_key']]);
+        add_settings_field('schema_genie_ai_api_key', __('API Key', 'schema-genie-ai'), [$this, 'render_api_key_field'], self::PAGE_SLUG, 'schema_genie_ai_azure');
+
+        register_setting(self::OPTION_GROUP, 'schema_genie_ai_azure_endpoint', ['sanitize_callback' => 'esc_url_raw']);
+        add_settings_field('schema_genie_ai_azure_endpoint', __('Azure Endpoint', 'schema-genie-ai'), function () {
+            $val = get_option('schema_genie_ai_azure_endpoint', '');
+            echo '<input type="url" name="schema_genie_ai_azure_endpoint" value="' . esc_attr($val) . '" class="regular-text" />';
+        }, self::PAGE_SLUG, 'schema_genie_ai_azure');
+
+        register_setting(self::OPTION_GROUP, 'schema_genie_ai_azure_api_version', ['sanitize_callback' => 'sanitize_text_field']);
+        add_settings_field('schema_genie_ai_azure_api_version', __('API Version', 'schema-genie-ai'), function () {
+            $val = get_option('schema_genie_ai_azure_api_version', '2025-01-01-preview');
+            echo '<input type="text" name="schema_genie_ai_azure_api_version" value="' . esc_attr($val) . '" class="regular-text" />';
+        }, self::PAGE_SLUG, 'schema_genie_ai_azure');
+
+        register_setting(self::OPTION_GROUP, 'schema_genie_ai_model', ['sanitize_callback' => 'sanitize_text_field']);
+        add_settings_field('schema_genie_ai_model', __('Model / Deployment Name', 'schema-genie-ai'), function () {
+            $val = get_option('schema_genie_ai_model', 'gpt-4o');
+            echo '<input type="text" name="schema_genie_ai_model" value="' . esc_attr($val) . '" class="regular-text" />';
+            echo '<p class="description">' . esc_html__('Azure deployment name, e.g., gpt-4o or gpt-4o-mini', 'schema-genie-ai') . '</p>';
+        }, self::PAGE_SLUG, 'schema_genie_ai_azure');
+
+        // Section: Generation Settings
+        add_settings_section('schema_genie_ai_generation', __('Generation Settings', 'schema-genie-ai'), null, self::PAGE_SLUG);
+
+        register_setting(self::OPTION_GROUP, 'schema_genie_ai_temperature', ['sanitize_callback' => function ($v) { return max(0, min(2, floatval($v))); }]);
+        add_settings_field('schema_genie_ai_temperature', __('Temperature', 'schema-genie-ai'), function () {
+            $val = get_option('schema_genie_ai_temperature', '0.1');
+            echo '<input type="number" name="schema_genie_ai_temperature" value="' . esc_attr($val) . '" min="0" max="2" step="0.1" class="small-text" />';
+            echo '<p class="description">' . esc_html__('Lower = more deterministic. Recommended: 0.1', 'schema-genie-ai') . '</p>';
+        }, self::PAGE_SLUG, 'schema_genie_ai_generation');
+
+        register_setting(self::OPTION_GROUP, 'schema_genie_ai_max_tokens', ['sanitize_callback' => function ($v) { return max(500, min(8000, intval($v))); }]);
+        add_settings_field('schema_genie_ai_max_tokens', __('Max Tokens', 'schema-genie-ai'), function () {
+            $val = get_option('schema_genie_ai_max_tokens', '2000');
+            echo '<input type="number" name="schema_genie_ai_max_tokens" value="' . esc_attr($val) . '" min="500" max="8000" step="100" class="small-text" />';
+        }, self::PAGE_SLUG, 'schema_genie_ai_generation');
+
+        register_setting(self::OPTION_GROUP, 'schema_genie_ai_timeout', ['sanitize_callback' => function ($v) { return max(10, min(120, intval($v))); }]);
+        add_settings_field('schema_genie_ai_timeout', __('Request Timeout (seconds)', 'schema-genie-ai'), function () {
+            $val = get_option('schema_genie_ai_timeout', '45');
+            echo '<input type="number" name="schema_genie_ai_timeout" value="' . esc_attr($val) . '" min="10" max="120" step="5" class="small-text" />';
+        }, self::PAGE_SLUG, 'schema_genie_ai_generation');
+
+        register_setting(self::OPTION_GROUP, 'schema_genie_ai_content_limit', ['sanitize_callback' => function ($v) { return max(1000, min(10000, intval($v))); }]);
+        add_settings_field('schema_genie_ai_content_limit', __('Content Character Limit', 'schema-genie-ai'), function () {
+            $val = get_option('schema_genie_ai_content_limit', '4000');
+            echo '<input type="number" name="schema_genie_ai_content_limit" value="' . esc_attr($val) . '" min="1000" max="10000" step="500" class="small-text" />';
+            echo '<p class="description">' . esc_html__('How many characters of article content to send to AI.', 'schema-genie-ai') . '</p>';
+        }, self::PAGE_SLUG, 'schema_genie_ai_generation');
+
+        register_setting(self::OPTION_GROUP, 'schema_genie_ai_auto_generate', ['sanitize_callback' => function ($v) { return $v ? '1' : '0'; }]);
+        add_settings_field('schema_genie_ai_auto_generate', __('Auto-generate on Publish', 'schema-genie-ai'), function () {
+            $val = get_option('schema_genie_ai_auto_generate', '0');
+            echo '<label><input type="checkbox" name="schema_genie_ai_auto_generate" value="1" ' . checked($val, '1', false) . ' /> ';
+            echo esc_html__('Automatically generate schema when a new post is published (first time only, async).', 'schema-genie-ai') . '</label>';
+        }, self::PAGE_SLUG, 'schema_genie_ai_generation');
+
+        register_setting(self::OPTION_GROUP, 'schema_genie_ai_enabled_post_types', ['sanitize_callback' => function ($v) { return is_array($v) ? array_map('sanitize_key', $v) : []; }]);
+        add_settings_field('schema_genie_ai_enabled_post_types', __('Post Types to Detect', 'schema-genie-ai'), function () {
+            $saved = get_option('schema_genie_ai_enabled_post_types', []);
+            $public_types = get_post_types(['public' => true], 'objects');
+            unset($public_types['attachment']);
+            if (empty($saved)) $saved = array_keys($public_types);
+            foreach ($public_types as $slug => $obj) {
+                $chk = in_array($slug, $saved, true) ? 'checked' : '';
+                echo '<label style="display:inline-block;margin-right:16px;margin-bottom:6px;"><input type="checkbox" name="schema_genie_ai_enabled_post_types[]" value="' . esc_attr($slug) . '" ' . $chk . ' /> ' . esc_html($obj->labels->singular_name ?? $obj->label) . '</label>';
+            }
+            echo '<p class="description">' . esc_html__('Select which post types should be detected for missing schemas.', 'schema-genie-ai') . '</p>';
+        }, self::PAGE_SLUG, 'schema_genie_ai_generation');
+    }
+
     public function render_api_key_field() {
         $encrypted = get_option('schema_genie_ai_api_key', '');
         $has_key = !empty($encrypted);
-
         if ($has_key) {
             echo '<input type="password" name="schema_genie_ai_api_key" value="" class="regular-text" placeholder="' . esc_attr__('••••••• (key saved, enter new to replace)', 'schema-genie-ai') . '" />';
             echo '<p class="description" style="color: green;">✓ ' . esc_html__('API key is stored (encrypted).', 'schema-genie-ai') . '</p>';
@@ -202,440 +125,454 @@ class Schema_Genie_AI_Settings {
             echo '<input type="password" name="schema_genie_ai_api_key" value="" class="regular-text" placeholder="' . esc_attr__('Enter your Azure OpenAI API key', 'schema-genie-ai') . '" />';
             echo '<p class="description" style="color: red;">✗ ' . esc_html__('No API key configured.', 'schema-genie-ai') . '</p>';
         }
-        echo '<br><button type="button" id="sgai-test-connection" class="button button-small" style="margin-top: 5px;">'
-            . esc_html__('Test Connection', 'schema-genie-ai') . '</button>';
-        echo '<span id="sgai-test-result" style="margin-left: 10px;"></span>';
+        echo '<br><button type="button" id="sgai-test-connection" class="button button-small" style="margin-top:5px;">' . esc_html__('Test Connection', 'schema-genie-ai') . '</button>';
+        echo '<span id="sgai-test-result" style="margin-left:10px;"></span>';
     }
 
-    /**
-     * Encrypt the API key before storing to wp_options.
-     */
     public function encrypt_api_key($new_key) {
-        if (empty($new_key)) {
-            return get_option('schema_genie_ai_api_key', '');
-        }
+        if (empty($new_key)) return get_option('schema_genie_ai_api_key', '');
         return self::encrypt($new_key);
     }
 
-    /**
-     * Encrypt a string using AES-256-CBC with WordPress salts.
-     */
     public static function encrypt(string $plaintext): string {
         $key = hash('sha256', wp_salt('auth'), true);
         $iv  = substr(hash('sha256', wp_salt('secure_auth'), true), 0, 16);
-        $encrypted = openssl_encrypt($plaintext, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
-        return base64_encode($encrypted);
+        return base64_encode(openssl_encrypt($plaintext, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv));
     }
 
-    /**
-     * Decrypt the API key from wp_options.
-     */
     public static function decrypt(string $encrypted): string {
         if (empty($encrypted)) return '';
         $key = hash('sha256', wp_salt('auth'), true);
         $iv  = substr(hash('sha256', wp_salt('secure_auth'), true), 0, 16);
-        $decoded = base64_decode($encrypted);
-        $decrypted = openssl_decrypt($decoded, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
-        if ($decrypted === false) return '';
-        return $decrypted;
+        $d = openssl_decrypt(base64_decode($encrypted), 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
+        return $d === false ? '' : $d;
     }
 
-    /**
-     * Get the decrypted API key.
-     */
     public static function get_api_key(): string {
-        $encrypted = get_option('schema_genie_ai_api_key', '');
-        return self::decrypt($encrypted);
+        return self::decrypt(get_option('schema_genie_ai_api_key', ''));
     }
 
-    /**
-     * Render the settings page.
-     */
+    // =========================================================================
+    //  RENDER PAGE — 3-Tab UI
+    // =========================================================================
+
     public function render_page() {
         if (!current_user_can('manage_options')) return;
 
-        global $wpdb;
-        $total_schemas = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = '_schema_genie_ai_status' AND meta_value = 'success'"
-        );
-        $total_errors = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = '_schema_genie_ai_status' AND meta_value = 'error'"
-        );
-        $total_posts = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'post' AND post_status = 'publish'"
-        );
-        $total_pages = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'page' AND post_status = 'publish'"
-        );
-
-
-        // Setup status checks
-        $has_endpoint = !empty(get_option('schema_genie_ai_azure_endpoint', ''));
-        $has_api_key  = !empty(get_option('schema_genie_ai_api_key', ''));
+        $active_tab = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'settings';
         $has_rank_math = class_exists('RankMath') || defined('RANK_MATH_VERSION');
-        $coverage_pct = $total_posts > 0 ? round(($total_schemas / $total_posts) * 100) : 0;
-        $posts_remaining = max(0, $total_posts - $total_schemas);
-
+        $nonce = wp_create_nonce('schema_genie_ai_nonce');
         ?>
         <style>
-            .sgai-wrap { max-width: 960px; }
-            .sgai-header {
-                background: linear-gradient(135deg, #1d2327 0%, #2c3338 100%);
-                color: #fff; padding: 24px 30px; border-radius: 8px;
-                margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between;
-            }
-            .sgai-header h1 { color: #fff; margin: 0; font-size: 22px; padding: 0; }
-            .sgai-header .sgai-version {
-                background: rgba(255,255,255,0.15); padding: 4px 12px;
-                border-radius: 20px; font-size: 12px; color: #c3c4c7;
-            }
-            .sgai-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
-            .sgai-card {
-                background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
-                padding: 20px; text-align: center; transition: box-shadow 0.2s;
-            }
-            .sgai-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-            .sgai-card .sgai-card-icon { font-size: 28px; margin-bottom: 4px; }
-            .sgai-card .sgai-card-value { font-size: 28px; font-weight: 700; line-height: 1.2; }
-            .sgai-card .sgai-card-label { font-size: 12px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
-            .sgai-card-success .sgai-card-value { color: #00a32a; }
-            .sgai-card-error .sgai-card-value { color: #d63638; }
-            .sgai-card-pending .sgai-card-value { color: #dba617; }
-            .sgai-card-info .sgai-card-value { color: #2271b1; }
-
-            .sgai-setup-wizard {
-                background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
-                padding: 24px 30px; margin-bottom: 20px;
-            }
-            .sgai-setup-wizard h2 { margin-top: 0; font-size: 16px; }
-            .sgai-steps { display: flex; gap: 0; margin: 16px 0 0; }
-            .sgai-step {
-                flex: 1; text-align: center; padding: 16px 12px;
-                position: relative; border: 1px solid #e0e0e0; background: #f9f9f9;
-            }
-            .sgai-step:first-child { border-radius: 6px 0 0 6px; }
-            .sgai-step:last-child { border-radius: 0 6px 6px 0; }
-            .sgai-step-done { background: #f0f9f0; border-color: #00a32a; }
-            .sgai-step-active { background: #fff8e5; border-color: #dba617; }
-            .sgai-step-num {
-                display: inline-block; width: 28px; height: 28px; line-height: 28px;
-                border-radius: 50%; font-weight: 700; font-size: 13px; margin-bottom: 6px;
-            }
-            .sgai-step-done .sgai-step-num { background: #00a32a; color: #fff; }
-            .sgai-step-active .sgai-step-num { background: #dba617; color: #fff; }
-            .sgai-step .sgai-step-num { background: #c3c4c7; color: #fff; }
-            .sgai-step-title { font-size: 13px; font-weight: 600; color: #1d2327; }
-            .sgai-step-desc { font-size: 11px; color: #666; margin-top: 4px; }
-
-            .sgai-section-box {
-                background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
-                padding: 24px 30px; margin-bottom: 20px;
-            }
-            .sgai-section-box h2 { margin-top: 0; padding-top: 0; font-size: 16px; border-bottom: 1px solid #f0f0f0; padding-bottom: 12px; }
-
-            .sgai-guide {
-                background: #f0f6fc; border: 1px solid #c3daf5; border-radius: 8px;
-                padding: 20px 24px; margin-bottom: 20px;
-            }
-            .sgai-guide h3 { margin-top: 0; color: #1d2327; font-size: 14px; }
-            .sgai-guide ol { margin: 10px 0 0; padding-left: 20px; }
-            .sgai-guide ol li { margin-bottom: 8px; font-size: 13px; line-height: 1.5; color: #333; }
-            .sgai-guide code { background: #e8e8e8; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
-
-            .sgai-coverage-bar {
-                background: #eee; height: 8px; border-radius: 4px; overflow: hidden; margin: 8px 0;
-            }
-            .sgai-coverage-fill {
-                height: 100%; border-radius: 4px; transition: width 0.5s;
-            }
+            .sgai-wrap{max-width:1100px}
+            .sgai-header{background:linear-gradient(135deg,#1d2327,#2c3338);color:#fff;padding:24px 30px;border-radius:8px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between}
+            .sgai-header h1{color:#fff;margin:0;font-size:22px;padding:0}
+            .sgai-header .sgai-version{background:rgba(255,255,255,.15);padding:4px 12px;border-radius:20px;font-size:12px;color:#c3c4c7}
+            .sgai-section-box{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:24px 30px;margin-bottom:20px}
+            .sgai-section-box h2{margin-top:0;padding-top:0;font-size:16px;border-bottom:1px solid #f0f0f0;padding-bottom:12px}
+            .sgai-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}
+            .sgai-card{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:16px;text-align:center}
+            .sgai-card .val{font-size:28px;font-weight:700;line-height:1.2}
+            .sgai-card .lbl{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.5px}
+            .sgai-queue-log{max-height:350px;overflow-y:auto;font-size:12px;border:1px solid #e0e0e0;border-radius:4px;padding:8px;background:#f9f9f9;margin-top:10px}
+            .sgai-queue-log .item{padding:3px 0;border-bottom:1px solid #eee}
         </style>
-
         <div class="wrap sgai-wrap">
-
-            <!-- Header -->
             <div class="sgai-header">
                 <div>
                     <h1>🧞 Schema Genie AI</h1>
-                    <p style="margin: 4px 0 0; color: #a7aaad; font-size: 13px;">
-                        <?php esc_html_e('AI-powered structured data generator for WordPress', 'schema-genie-ai'); ?>
-                    </p>
+                    <p style="margin:4px 0 0;color:#a7aaad;font-size:13px;"><?php esc_html_e('AI-powered structured data generator', 'schema-genie-ai'); ?></p>
                 </div>
-                <div style="text-align: right;">
+                <div style="text-align:right">
                     <span class="sgai-version">v<?php echo esc_html(SCHEMA_GENIE_AI_VERSION); ?></span>
-                    <?php if ($has_rank_math): ?>
-                        <br><span style="font-size: 11px; color: #72aee6; margin-top: 4px; display: inline-block;">✓ Rank Math <?php esc_html_e('detected', 'schema-genie-ai'); ?></span>
-                    <?php endif; ?>
+                    <?php if ($has_rank_math): ?><br><span style="font-size:11px;color:#72aee6;margin-top:4px;display:inline-block">✓ Rank Math</span><?php endif; ?>
                 </div>
             </div>
 
-            <!-- Setup Wizard -->
+            <!-- Tabs Navigation -->
+            <h2 class="nav-tab-wrapper">
+                <a href="?page=<?php echo self::PAGE_SLUG; ?>&tab=settings" class="nav-tab <?php echo $active_tab === 'settings' ? 'nav-tab-active' : ''; ?>">⚙️ <?php esc_html_e('Settings', 'schema-genie-ai'); ?></a>
+                <a href="?page=<?php echo self::PAGE_SLUG; ?>&tab=missing" class="nav-tab <?php echo $active_tab === 'missing' ? 'nav-tab-active' : ''; ?>">📋 <?php esc_html_e('Missing Schemas', 'schema-genie-ai'); ?></a>
+                <a href="?page=<?php echo self::PAGE_SLUG; ?>&tab=log" class="nav-tab <?php echo $active_tab === 'log' ? 'nav-tab-active' : ''; ?>">📝 <?php esc_html_e('AI Request Log', 'schema-genie-ai'); ?></a>
+            </h2>
+
             <?php
-            $step1_done = $has_endpoint;
-            $step2_done = $has_api_key;
-            $step3_done = $total_schemas > 0;
-            $all_done = $step1_done && $step2_done && $step3_done;
+            switch ($active_tab) {
+                case 'missing':
+                    $this->render_tab_missing($nonce);
+                    break;
+                case 'log':
+                    $this->render_tab_log();
+                    break;
+                default:
+                    $this->render_tab_settings($nonce);
+                    break;
+            }
             ?>
-            <?php if (!$all_done): ?>
-            <div class="sgai-setup-wizard">
-                <h2>🚀 <?php esc_html_e('Quick Setup', 'schema-genie-ai'); ?></h2>
-                <p style="color: #666; font-size: 13px; margin: 0;">
-                    <?php esc_html_e('Complete these steps to start generating schema markup:', 'schema-genie-ai'); ?>
-                </p>
-                <div class="sgai-steps">
-                    <div class="sgai-step <?php echo $step1_done ? 'sgai-step-done' : (!$step1_done ? 'sgai-step-active' : ''); ?>">
-                        <div class="sgai-step-num"><?php echo $step1_done ? '✓' : '1'; ?></div>
-                        <div class="sgai-step-title"><?php esc_html_e('Configure Endpoint', 'schema-genie-ai'); ?></div>
-                        <div class="sgai-step-desc"><?php esc_html_e('Enter Azure OpenAI endpoint URL', 'schema-genie-ai'); ?></div>
-                    </div>
-                    <div class="sgai-step <?php echo $step2_done ? 'sgai-step-done' : ($step1_done && !$step2_done ? 'sgai-step-active' : ''); ?>">
-                        <div class="sgai-step-num"><?php echo $step2_done ? '✓' : '2'; ?></div>
-                        <div class="sgai-step-title"><?php esc_html_e('Add API Key & Test', 'schema-genie-ai'); ?></div>
-                        <div class="sgai-step-desc"><?php esc_html_e('Enter key → Test Connection → Save', 'schema-genie-ai'); ?></div>
-                    </div>
-                    <div class="sgai-step <?php echo $step3_done ? 'sgai-step-done' : ($step2_done && !$step3_done ? 'sgai-step-active' : ''); ?>">
-                        <div class="sgai-step-num"><?php echo $step3_done ? '✓' : '3'; ?></div>
-                        <div class="sgai-step-title"><?php esc_html_e('Generate Schemas', 'schema-genie-ai'); ?></div>
-                        <div class="sgai-step-desc"><?php esc_html_e('Go to any post → click Generate', 'schema-genie-ai'); ?></div>
-                    </div>
-                </div>
-            </div>
-            <?php endif; ?>
-
-            <!-- Dashboard Stats -->
-            <div class="sgai-cards">
-                <div class="sgai-card sgai-card-success">
-                    <div class="sgai-card-icon">✅</div>
-                    <div class="sgai-card-value"><?php echo esc_html($total_schemas); ?></div>
-                    <div class="sgai-card-label"><?php esc_html_e('Schemas Generated', 'schema-genie-ai'); ?></div>
-                </div>
-                <div class="sgai-card sgai-card-pending">
-                    <div class="sgai-card-icon">⏳</div>
-                    <div class="sgai-card-value"><?php echo esc_html($posts_remaining); ?></div>
-                    <div class="sgai-card-label"><?php esc_html_e('Posts Remaining', 'schema-genie-ai'); ?></div>
-                </div>
-                <div class="sgai-card sgai-card-error">
-                    <div class="sgai-card-icon">❌</div>
-                    <div class="sgai-card-value"><?php echo esc_html($total_errors); ?></div>
-                    <div class="sgai-card-label"><?php esc_html_e('Errors', 'schema-genie-ai'); ?></div>
-                </div>
-
-            </div>
-
-            <!-- Coverage Progress -->
-            <?php if ($total_posts > 0): ?>
-            <div style="background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px 24px; margin-bottom: 20px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                    <span style="font-size: 13px; font-weight: 600; color: #1d2327;">
-                        📊 <?php esc_html_e('Schema Coverage', 'schema-genie-ai'); ?>
-                    </span>
-                    <span style="font-size: 13px; font-weight: 700; color: <?php echo $coverage_pct >= 80 ? '#00a32a' : ($coverage_pct >= 40 ? '#dba617' : '#d63638'); ?>;">
-                        <?php echo esc_html($coverage_pct); ?>%
-                    </span>
-                </div>
-                <div class="sgai-coverage-bar">
-                    <div class="sgai-coverage-fill" style="width: <?php echo esc_attr($coverage_pct); ?>%; background: <?php echo $coverage_pct >= 80 ? '#00a32a' : ($coverage_pct >= 40 ? '#dba617' : '#d63638'); ?>;"></div>
-                </div>
-                <span style="font-size: 11px; color: #888;">
-                    <?php printf(
-                        esc_html__('%d of %d published posts have schema markup (%d pages also supported)', 'schema-genie-ai'),
-                        $total_schemas, $total_posts, $total_pages
-                    ); ?>
-                </span>
-            </div>
-            <?php endif; ?>
-
-            <!-- Quick Start Guide -->
-            <div class="sgai-guide">
-                <h3>📖 <?php esc_html_e('How to Use Schema Genie AI', 'schema-genie-ai'); ?></h3>
-                <ol>
-                    <li>
-                        <strong><?php esc_html_e('First:', 'schema-genie-ai'); ?></strong>
-                        <?php esc_html_e('Fill in the Azure OpenAI Endpoint and API Version below, then click', 'schema-genie-ai'); ?>
-                        <strong><?php esc_html_e('Save Settings', 'schema-genie-ai'); ?></strong>.
-                    </li>
-                    <li>
-                        <strong><?php esc_html_e('Then:', 'schema-genie-ai'); ?></strong>
-                        <?php esc_html_e('Enter your API Key → click', 'schema-genie-ai'); ?>
-                        <strong><?php esc_html_e('Test Connection', 'schema-genie-ai'); ?></strong>
-                        → <?php esc_html_e('if successful, click', 'schema-genie-ai'); ?>
-                        <strong><?php esc_html_e('Save Settings', 'schema-genie-ai'); ?></strong>
-                        <?php esc_html_e('again.', 'schema-genie-ai'); ?>
-                    </li>
-                    <li>
-                        <strong><?php esc_html_e('Generate:', 'schema-genie-ai'); ?></strong>
-                        <?php esc_html_e('Edit any post/page → find "Schema Genie AI" box in the sidebar → click', 'schema-genie-ai'); ?>
-                        <strong><?php esc_html_e('Generate Schema', 'schema-genie-ai'); ?></strong>.
-                    </li>
-                    <li>
-                        <strong><?php esc_html_e('Verify:', 'schema-genie-ai'); ?></strong>
-                        <?php esc_html_e('View your post on the frontend → Right Click → View Page Source → search for', 'schema-genie-ai'); ?>
-                        <code>schema-genie-ai</code>.
-                        <?php if ($has_rank_math): ?>
-                        <br><?php esc_html_e('Or check the Rank Math → Schema tab on each post.', 'schema-genie-ai'); ?>
-                        <?php endif; ?>
-                    </li>
-                </ol>
-            </div>
-
-            <!-- Settings Form -->
-            <div class="sgai-section-box">
-                <form method="post" action="options.php">
-                    <?php
-                    settings_fields(self::OPTION_GROUP);
-                    do_settings_sections(self::PAGE_SLUG);
-                    submit_button(__('Save Settings', 'schema-genie-ai'));
-                    ?>
-                </form>
-            </div>
-
-            <!-- Bulk Generation Tool -->
-            <div class="sgai-section-box">
-                <h2>⚡ <?php esc_html_e('Bulk Schema Generation', 'schema-genie-ai'); ?></h2>
-                <p style="color: #666; font-size: 13px;">
-                    <?php esc_html_e('Generate schemas for all published posts that do not have one yet. Each post will call the Azure OpenAI API and use tokens.', 'schema-genie-ai'); ?>
-                </p>
-                <?php if ($posts_remaining > 0): ?>
-                <p style="font-size: 13px;">
-                    <strong><?php echo esc_html($posts_remaining); ?></strong> <?php esc_html_e('posts still need schemas.', 'schema-genie-ai'); ?>
-                </p>
-                <?php endif; ?>
-                <button type="button" id="sgai-bulk-generate" class="button button-primary" <?php echo !$has_api_key ? 'disabled style="opacity:0.5;"' : ''; ?>>
-                    <?php esc_html_e('Generate All Missing Schemas', 'schema-genie-ai'); ?>
-                </button>
-                <?php if (!$has_api_key): ?>
-                    <p style="color: #d63638; font-size: 12px; margin-top: 6px;">
-                        ⚠ <?php esc_html_e('Configure and save your API key first.', 'schema-genie-ai'); ?>
-                    </p>
-                <?php endif; ?>
-                <div id="sgai-bulk-progress" style="margin-top: 12px; display: none;">
-                    <div style="background: #eee; height: 24px; border-radius: 4px; overflow: hidden;">
-                        <div id="sgai-bulk-bar" style="background: #2271b1; height: 100%; width: 0%; transition: width 0.3s;"></div>
-                    </div>
-                    <p id="sgai-bulk-status" style="font-size: 13px; color: #666;"></p>
-                </div>
-            </div>
-
-            <script>
-            jQuery(function($) {
-                $('#sgai-bulk-generate').on('click', function() {
-                    if (!confirm('<?php echo esc_js(__('This will generate schemas for all posts without one. Each call uses API tokens. Continue?', 'schema-genie-ai')); ?>')) return;
-
-                    var $btn = $(this).prop('disabled', true);
-                    var $progress = $('#sgai-bulk-progress').show();
-                    var $bar = $('#sgai-bulk-bar');
-                    var $status = $('#sgai-bulk-status');
-
-                    $.post(ajaxurl, {
-                        action: 'sgai_bulk_get_posts',
-                        nonce: '<?php echo wp_create_nonce('schema_genie_ai_nonce'); ?>'
-                    }, function(response) {
-                        if (!response.success || !response.data.post_ids.length) {
-                            $status.text('No posts need schema generation.');
-                            $btn.prop('disabled', false);
-                            return;
-                        }
-
-                        var ids = response.data.post_ids;
-                        var total = ids.length;
-                        var done = 0;
-                        var errors = 0;
-
-                        function processNext() {
-                            if (ids.length === 0) {
-                                $status.text('Done! Generated: ' + (done - errors) + ', Errors: ' + errors);
-                                $btn.prop('disabled', false);
-                                return;
-                            }
-                            var id = ids.shift();
-                            $status.text('Processing post ' + (done + 1) + ' of ' + total + '...');
-                            $.post(ajaxurl, {
-                                action: 'sgai_generate_schema',
-                                post_id: id,
-                                nonce: '<?php echo wp_create_nonce('schema_genie_ai_nonce'); ?>'
-                            }, function(r) {
-                                done++;
-                                if (!r.success) errors++;
-                                $bar.css('width', ((done / total) * 100) + '%');
-                                setTimeout(processNext, 3000);
-                            }).fail(function() {
-                                done++;
-                                errors++;
-                                $bar.css('width', ((done / total) * 100) + '%');
-                                setTimeout(processNext, 3000);
-                            });
-                        }
-                        processNext();
-                    });
-                });
-            });
-            </script>
-
-            <!-- Test Connection Script -->
-            <script>
-            jQuery(function($) {
-                var $saveBtn = $('input[type="submit"]');
-                var $apiKeyInput = $('input[name="schema_genie_ai_api_key"]');
-                var hasStoredKey = <?php echo json_encode(!empty(get_option('schema_genie_ai_api_key', ''))); ?>;
-
-                if (!hasStoredKey && $apiKeyInput.val().trim() === '') {
-                    $saveBtn.prop('disabled', true).css('opacity', '0.5');
-                }
-
-                $apiKeyInput.on('input', function() {
-                    if ($(this).val().trim() !== '' || hasStoredKey) {
-                        $saveBtn.prop('disabled', false).css('opacity', '1');
-                    } else {
-                        $saveBtn.prop('disabled', true).css('opacity', '0.5');
-                    }
-                });
-
-                $('#sgai-test-connection').on('click', function() {
-                    var $btn = $(this).prop('disabled', true);
-                    var $result = $('#sgai-test-result').text('Testing...').css('color', '#666');
-                    var rawKey = $apiKeyInput.val().trim();
-
-                    if (!rawKey) {
-                        $result.text('\u2717 Please enter an API key first.').css('color', '#d63638');
-                        $btn.prop('disabled', false);
-                        return;
-                    }
-
-                    $.post(ajaxurl, {
-                        action: 'sgai_test_connection',
-                        nonce: '<?php echo wp_create_nonce('schema_genie_ai_nonce'); ?>',
-                        raw_key: rawKey
-                    }, function(response) {
-                        $btn.prop('disabled', false);
-                        if (response.success) {
-                            $result.text('\u2713 ' + response.data.message).css('color', '#00a32a');
-                            $saveBtn.prop('disabled', false).css('opacity', '1');
-                        } else {
-                            var msg = response.data.message;
-                            if (response.data.url) msg += ' | URL: ' + response.data.url;
-                            $result.text('\u2717 ' + msg).css('color', '#d63638');
-                        }
-                    }).fail(function() {
-                        $btn.prop('disabled', false);
-                        $result.text('\u2717 Request failed').css('color', '#d63638');
-                    });
-                });
-            });
-            </script>
         </div>
+        <?php
+    }
+
+    // =========================================================================
+    //  TAB: Settings
+    // =========================================================================
+
+    private function render_tab_settings(string $nonce) {
+        global $wpdb;
+        $enabled_types = self::get_enabled_post_types();
+        $types_in = "'" . implode("','", array_map('esc_sql', $enabled_types)) . "'";
+
+        $total_schemas = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = '_schema_genie_ai_status' AND meta_value = 'success'");
+        $total_errors  = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = '_schema_genie_ai_status' AND meta_value = 'error'");
+        $total_content = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type IN ({$types_in}) AND post_status = 'publish'");
+        $pending = max(0, $total_content - $total_schemas);
+        $pct = $total_content > 0 ? round(($total_schemas / $total_content) * 100) : 0;
+        ?>
+        <!-- Dashboard Cards -->
+        <div class="sgai-cards" style="margin-top:16px;">
+            <div class="sgai-card"><div style="font-size:24px">✅</div><div class="val" style="color:#00a32a"><?php echo esc_html($total_schemas); ?></div><div class="lbl">Schemas</div></div>
+            <div class="sgai-card"><div style="font-size:24px">⏳</div><div class="val" style="color:#dba617"><?php echo esc_html($pending); ?></div><div class="lbl">Pending</div></div>
+            <div class="sgai-card"><div style="font-size:24px">❌</div><div class="val" style="color:#d63638"><?php echo esc_html($total_errors); ?></div><div class="lbl">Errors</div></div>
+            <div class="sgai-card"><div style="font-size:24px">📊</div><div class="val" style="color:#2271b1"><?php echo esc_html($pct); ?>%</div><div class="lbl">Coverage</div></div>
+        </div>
+
+        <!-- Settings Form -->
+        <div class="sgai-section-box">
+            <form method="post" action="options.php">
+                <?php settings_fields(self::OPTION_GROUP); do_settings_sections(self::PAGE_SLUG); submit_button(__('Save Settings', 'schema-genie-ai')); ?>
+            </form>
+        </div>
+
+        <!-- Test Connection Script -->
+        <script>
+        jQuery(function($){
+            var $saveBtn=$('input[type="submit"]'),$apiKeyInput=$('input[name="schema_genie_ai_api_key"]'),hasStoredKey=<?php echo json_encode(!empty(get_option('schema_genie_ai_api_key',''))); ?>;
+            if(!hasStoredKey&&$apiKeyInput.val().trim()===''){$saveBtn.prop('disabled',true).css('opacity','0.5');}
+            $apiKeyInput.on('input',function(){if($(this).val().trim()!==''||hasStoredKey){$saveBtn.prop('disabled',false).css('opacity','1')}else{$saveBtn.prop('disabled',true).css('opacity','0.5')}});
+            $('#sgai-test-connection').on('click',function(){
+                var $btn=$(this).prop('disabled',true),$result=$('#sgai-test-result').text('Testing...').css('color','#666'),rawKey=$apiKeyInput.val().trim();
+                if(!rawKey){$result.text('\u2717 Enter API key first.').css('color','#d63638');$btn.prop('disabled',false);return;}
+                $.post(ajaxurl,{action:'sgai_test_connection',nonce:'<?php echo esc_js($nonce); ?>',raw_key:rawKey},function(r){
+                    $btn.prop('disabled',false);
+                    if(r.success){$result.text('\u2713 '+r.data.message).css('color','#00a32a');$saveBtn.prop('disabled',false).css('opacity','1')}
+                    else{var m=r.data.message;if(r.data.url)m+=' | URL: '+r.data.url;$result.text('\u2717 '+m).css('color','#d63638')}
+                }).fail(function(){$btn.prop('disabled',false);$result.text('\u2717 Request failed').css('color','#d63638')});
+            });
+        });
+        </script>
+        <?php
+    }
+
+    // =========================================================================
+    //  TAB: Missing Schemas
+    // =========================================================================
+
+    private function render_tab_missing(string $nonce) {
+        global $wpdb;
+        $enabled_types = self::get_enabled_post_types();
+        $types_in = "'" . implode("','", array_map('esc_sql', $enabled_types)) . "'";
+
+        // Filter
+        $filter_type = isset($_GET['post_type_filter']) ? sanitize_key($_GET['post_type_filter']) : '';
+        $paged = isset($_GET['paged']) ? max(1, (int) $_GET['paged']) : 1;
+        $per_page = 20;
+        $offset = ($paged - 1) * $per_page;
+
+        $where_type = $filter_type ? $wpdb->prepare("AND p.post_type = %s", $filter_type) : "AND p.post_type IN ({$types_in})";
+
+        $total = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->posts} p LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = '_schema_genie_ai_status' WHERE p.post_status = 'publish' {$where_type} AND (pm.meta_value IS NULL OR pm.meta_value != 'success')");
+
+        $posts = $wpdb->get_results("SELECT p.ID, p.post_title, p.post_type, p.post_date, COALESCE(pm.meta_value, 'none') as schema_status, COALESCE(pe.meta_value, '') as schema_error FROM {$wpdb->posts} p LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = '_schema_genie_ai_status' LEFT JOIN {$wpdb->postmeta} pe ON p.ID = pe.post_id AND pe.meta_key = '_schema_genie_ai_error' WHERE p.post_status = 'publish' {$where_type} AND (pm.meta_value IS NULL OR pm.meta_value != 'success') ORDER BY p.ID DESC LIMIT {$per_page} OFFSET {$offset}", ARRAY_A);
+
+        $total_pages = ceil($total / $per_page);
+        $public_types = get_post_types(['public' => true], 'objects');
+        unset($public_types['attachment']);
+        $base_url = admin_url('options-general.php?page=' . self::PAGE_SLUG . '&tab=missing');
+        ?>
+        <div class="sgai-section-box" style="margin-top:16px;">
+            <h2>📋 <?php esc_html_e('Posts & Pages Missing Schemas', 'schema-genie-ai'); ?> <span style="font-weight:normal;font-size:13px;color:#666;">(<?php echo esc_html($total); ?> found)</span></h2>
+
+            <!-- Filters -->
+            <div style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <select id="sgai-type-filter" style="min-width:140px;">
+                    <option value=""><?php esc_html_e('All Post Types', 'schema-genie-ai'); ?></option>
+                    <?php foreach ($enabled_types as $slug): $lbl = isset($public_types[$slug]) ? $public_types[$slug]->labels->singular_name : $slug; ?>
+                        <option value="<?php echo esc_attr($slug); ?>" <?php selected($filter_type, $slug); ?>><?php echo esc_html($lbl); ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <button type="button" id="sgai-filter-btn" class="button"><?php esc_html_e('Filter', 'schema-genie-ai'); ?></button>
+                <span style="flex:1"></span>
+                <button type="button" id="sgai-bulk-generate" class="button button-primary" disabled>🚀 <?php esc_html_e('Generate Selected', 'schema-genie-ai'); ?></button>
+                <button type="button" id="sgai-bulk-stop" class="button" style="display:none;">⏹ <?php esc_html_e('Stop', 'schema-genie-ai'); ?></button>
+            </div>
+
+            <!-- Table -->
+            <table class="wp-list-table widefat fixed striped" id="sgai-missing-table">
+                <thead>
+                    <tr>
+                        <td class="manage-column column-cb check-column"><input type="checkbox" id="sgai-select-all" /></td>
+                        <th style="width:50px">ID</th>
+                        <th><?php esc_html_e('Title', 'schema-genie-ai'); ?></th>
+                        <th style="width:100px"><?php esc_html_e('Type', 'schema-genie-ai'); ?></th>
+                        <th style="width:100px"><?php esc_html_e('Status', 'schema-genie-ai'); ?></th>
+                        <th style="width:120px"><?php esc_html_e('Published', 'schema-genie-ai'); ?></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (empty($posts)): ?>
+                        <tr><td colspan="6" style="text-align:center;padding:20px;color:#666;">🎉 <?php esc_html_e('All posts have schemas!', 'schema-genie-ai'); ?></td></tr>
+                    <?php else: foreach ($posts as $p):
+                        $edit_link = get_edit_post_link($p['ID']);
+                        $type_label = isset($public_types[$p['post_type']]) ? $public_types[$p['post_type']]->labels->singular_name : $p['post_type'];
+                        $status_badge = $p['schema_status'] === 'error'
+                            ? '<span style="color:#d63638" title="' . esc_attr($p['schema_error']) . '">❌ Error</span>'
+                            : '<span style="color:#888">— None</span>';
+                    ?>
+                        <tr>
+                            <th class="check-column"><input type="checkbox" class="sgai-row-cb" value="<?php echo esc_attr($p['ID']); ?>" /></th>
+                            <td><?php echo esc_html($p['ID']); ?></td>
+                            <td><a href="<?php echo esc_url($edit_link); ?>" target="_blank"><?php echo esc_html($p['post_title'] ?: '(no title)'); ?></a></td>
+                            <td><?php echo esc_html($type_label); ?></td>
+                            <td class="sgai-status-<?php echo esc_attr($p['ID']); ?>"><?php echo $status_badge; ?></td>
+                            <td><?php echo esc_html(mysql2date('Y-m-d', $p['post_date'])); ?></td>
+                        </tr>
+                    <?php endforeach; endif; ?>
+                </tbody>
+            </table>
+
+            <!-- Pagination -->
+            <?php if ($total_pages > 1): ?>
+            <div class="tablenav bottom" style="margin-top:8px;">
+                <div class="tablenav-pages">
+                    <span class="displaying-num"><?php echo esc_html($total); ?> items</span>
+                    <?php for ($i = 1; $i <= $total_pages; $i++): ?>
+                        <?php if ($i === $paged): ?><span class="tablenav-pages-navspan button disabled"><?php echo $i; ?></span>
+                        <?php else: ?><a class="button" href="<?php echo esc_url(add_query_arg('paged', $i, $base_url . ($filter_type ? '&post_type_filter=' . $filter_type : ''))); ?>"><?php echo $i; ?></a>
+                        <?php endif; ?>
+                    <?php endfor; ?>
+                </div>
+            </div>
+            <?php endif; ?>
+
+            <!-- Queue Progress -->
+            <div id="sgai-queue-panel" style="display:none;margin-top:16px;">
+                <h3 style="margin:0 0 8px;">⚡ <?php esc_html_e('Generation Queue', 'schema-genie-ai'); ?></h3>
+                <div style="background:#eee;height:24px;border-radius:4px;overflow:hidden;">
+                    <div id="sgai-queue-bar" style="background:#2271b1;height:100%;width:0%;transition:width .3s;"></div>
+                </div>
+                <p id="sgai-queue-status" style="font-size:13px;color:#666;margin:6px 0;"></p>
+                <div id="sgai-queue-log" class="sgai-queue-log"></div>
+            </div>
+        </div>
+
+        <script>
+        jQuery(function($){
+            var nonce='<?php echo esc_js($nonce); ?>',running=false,stopRequested=false;
+
+            // Filter button
+            $('#sgai-filter-btn').on('click',function(){
+                var f=$('#sgai-type-filter').val();
+                window.location.href='<?php echo esc_js($base_url); ?>'+(f?'&post_type_filter='+f:'');
+            });
+
+            // Select all
+            $('#sgai-select-all').on('change',function(){$('.sgai-row-cb').prop('checked',this.checked);toggleBulkBtn()});
+            $(document).on('change','.sgai-row-cb',toggleBulkBtn);
+            function toggleBulkBtn(){$('#sgai-bulk-generate').prop('disabled',$('.sgai-row-cb:checked').length===0||running)}
+
+            // Bulk Generate
+            $('#sgai-bulk-generate').on('click',function(){
+                var ids=[];$('.sgai-row-cb:checked').each(function(){ids.push($(this).val())});
+                if(!ids.length)return;
+                if(!confirm('Generate schemas for '+ids.length+' posts? Each call uses API tokens.'))return;
+
+                // Acquire bulk lock
+                $.post(ajaxurl,{action:'sgai_bulk_start',nonce:nonce},function(r){
+                    if(!r.success){alert(r.data.message||'Bulk lock failed');return;}
+                    running=true;stopRequested=false;
+                    $('#sgai-bulk-generate').prop('disabled',true);
+                    $('#sgai-bulk-stop').show();
+                    $('#sgai-queue-panel').show();
+                    var $bar=$('#sgai-queue-bar'),$status=$('#sgai-queue-status'),$log=$('#sgai-queue-log');
+                    $log.empty();
+                    var total=ids.length,done=0,errors=0;
+
+                    function next(){
+                        if(stopRequested||ids.length===0){
+                            finish();return;
+                        }
+                        var id=ids.shift();done++;
+                        $status.text('Processing '+done+' of '+total+'...');
+                        $bar.css('width',((done/total)*100)+'%');
+                        $.post(ajaxurl,{action:'sgai_generate_schema',post_id:id,nonce:nonce,trigger_type:'bulk'},function(r){
+                            if(r.success){
+                                $log.prepend('<div class="item">✅ <strong>#'+id+'</strong> — '+r.data.message+'</div>');
+                                $('.sgai-status-'+id).html('<span style="color:#00a32a">✅ Done</span>');
+                            }else{
+                                errors++;
+                                $log.prepend('<div class="item">❌ <strong>#'+id+'</strong> — '+(r.data.message||'Unknown error')+'</div>');
+                                $('.sgai-status-'+id).html('<span style="color:#d63638">❌ Error</span>');
+                            }
+                            setTimeout(next,3000);
+                        }).fail(function(){
+                            errors++;
+                            $log.prepend('<div class="item">❌ <strong>#'+id+'</strong> — Request failed</div>');
+                            setTimeout(next,3000);
+                        });
+                    }
+
+                    function finish(){
+                        running=false;
+                        $status.text('Done! Generated: '+(done-errors)+', Errors: '+errors+(stopRequested?' (stopped by user)':''));
+                        $bar.css('width','100%');
+                        $('#sgai-bulk-stop').hide();
+                        $('#sgai-bulk-generate').prop('disabled',false);
+                        $.post(ajaxurl,{action:'sgai_bulk_complete',nonce:nonce});
+                    }
+
+                    next();
+                });
+            });
+
+            // Stop button
+            $('#sgai-bulk-stop').on('click',function(){stopRequested=true;$(this).prop('disabled',true).text('Stopping...');});
+        });
+        </script>
+        <?php
+    }
+
+    // =========================================================================
+    //  TAB: AI Request Log
+    // =========================================================================
+
+    private function render_tab_log() {
+        $paged     = isset($_GET['paged']) ? max(1, (int) $_GET['paged']) : 1;
+        $status_f  = isset($_GET['status_filter']) ? sanitize_key($_GET['status_filter']) : '';
+        $trigger_f = isset($_GET['trigger_filter']) ? sanitize_key($_GET['trigger_filter']) : '';
+        $per_page  = 20;
+
+        $logs  = Schema_Genie_AI_Request_Log::get_logs($paged, $per_page, $status_f, $trigger_f);
+        $total = Schema_Genie_AI_Request_Log::get_total_count($status_f, $trigger_f);
+        $stats = Schema_Genie_AI_Request_Log::get_stats();
+        $total_pages = ceil($total / $per_page);
+        $base_url = admin_url('options-general.php?page=' . self::PAGE_SLUG . '&tab=log');
+        ?>
+        <!-- Log Stats -->
+        <div class="sgai-cards" style="margin-top:16px;">
+            <div class="sgai-card"><div class="val" style="color:#2271b1"><?php echo esc_html($stats['total']); ?></div><div class="lbl">Total Requests</div></div>
+            <div class="sgai-card"><div class="val" style="color:#00a32a"><?php echo esc_html($stats['success']); ?></div><div class="lbl">Success</div></div>
+            <div class="sgai-card"><div class="val" style="color:#d63638"><?php echo esc_html($stats['error']); ?></div><div class="lbl">Errors</div></div>
+            <div class="sgai-card"><div class="val" style="color:#8c5e19"><?php echo esc_html(number_format($stats['total_tokens'])); ?></div><div class="lbl">Total Tokens</div></div>
+        </div>
+
+        <div class="sgai-section-box">
+            <h2>📝 <?php esc_html_e('AI Request Log', 'schema-genie-ai'); ?></h2>
+
+            <!-- Filters -->
+            <div style="margin-bottom:12px;display:flex;gap:10px;flex-wrap:wrap;">
+                <select id="sgai-log-status" style="min-width:120px;">
+                    <option value="">All Status</option>
+                    <option value="success" <?php selected($status_f, 'success'); ?>>Success</option>
+                    <option value="error" <?php selected($status_f, 'error'); ?>>Error</option>
+                </select>
+                <select id="sgai-log-trigger" style="min-width:120px;">
+                    <option value="">All Triggers</option>
+                    <option value="manual" <?php selected($trigger_f, 'manual'); ?>>Manual</option>
+                    <option value="bulk" <?php selected($trigger_f, 'bulk'); ?>>Bulk</option>
+                    <option value="cron" <?php selected($trigger_f, 'cron'); ?>>Cron</option>
+                    <option value="auto_save" <?php selected($trigger_f, 'auto_save'); ?>>Auto Save</option>
+                </select>
+                <button type="button" id="sgai-log-filter" class="button">Filter</button>
+            </div>
+
+            <table class="wp-list-table widefat fixed striped">
+                <thead>
+                    <tr>
+                        <th style="width:140px"><?php esc_html_e('Date/Time', 'schema-genie-ai'); ?></th>
+                        <th><?php esc_html_e('Post', 'schema-genie-ai'); ?></th>
+                        <th style="width:80px"><?php esc_html_e('Type', 'schema-genie-ai'); ?></th>
+                        <th style="width:80px"><?php esc_html_e('Trigger', 'schema-genie-ai'); ?></th>
+                        <th style="width:90px"><?php esc_html_e('User', 'schema-genie-ai'); ?></th>
+                        <th style="width:70px"><?php esc_html_e('Status', 'schema-genie-ai'); ?></th>
+                        <th style="width:80px"><?php esc_html_e('Tokens', 'schema-genie-ai'); ?></th>
+                        <th style="width:80px"><?php esc_html_e('Duration', 'schema-genie-ai'); ?></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (empty($logs)): ?>
+                        <tr><td colspan="8" style="text-align:center;padding:20px;color:#666;"><?php esc_html_e('No log entries yet.', 'schema-genie-ai'); ?></td></tr>
+                    <?php else: foreach ($logs as $log):
+                        $status_icon = $log['status'] === 'success' ? '🟢' : ($log['status'] === 'error' ? '🔴' : '🟡');
+                        $edit_link = get_edit_post_link($log['post_id']);
+                    ?>
+                        <tr>
+                            <td><?php echo esc_html($log['created_at']); ?></td>
+                            <td><a href="<?php echo esc_url($edit_link); ?>" target="_blank">#<?php echo esc_html($log['post_id']); ?> <?php echo esc_html($log['post_title']); ?></a></td>
+                            <td><?php echo esc_html($log['post_type']); ?></td>
+                            <td><code><?php echo esc_html($log['trigger_type']); ?></code></td>
+                            <td><?php echo esc_html($log['triggered_by']); ?></td>
+                            <td><?php echo $status_icon; ?> <?php echo esc_html($log['status']); ?></td>
+                            <td><?php echo esc_html(number_format($log['tokens_total'])); ?></td>
+                            <td><?php echo $log['duration_ms'] > 0 ? esc_html(round($log['duration_ms'] / 1000, 1)) . 's' : '—'; ?></td>
+                        </tr>
+                        <?php if ($log['status'] === 'error' && !empty($log['error_message'])): ?>
+                        <tr><td colspan="8" style="background:#fef0f0;padding:4px 12px;font-size:12px;color:#d63638;">↳ <?php echo esc_html($log['error_message']); ?></td></tr>
+                        <?php endif; ?>
+                    <?php endforeach; endif; ?>
+                </tbody>
+            </table>
+
+            <!-- Pagination -->
+            <?php if ($total_pages > 1): ?>
+            <div class="tablenav bottom" style="margin-top:8px;">
+                <div class="tablenav-pages">
+                    <span class="displaying-num"><?php echo esc_html($total); ?> items</span>
+                    <?php
+                    $filter_args = '';
+                    if ($status_f) $filter_args .= '&status_filter=' . $status_f;
+                    if ($trigger_f) $filter_args .= '&trigger_filter=' . $trigger_f;
+                    for ($i = 1; $i <= $total_pages; $i++):
+                        if ($i === $paged): ?><span class="tablenav-pages-navspan button disabled"><?php echo $i; ?></span>
+                        <?php else: ?><a class="button" href="<?php echo esc_url(add_query_arg('paged', $i, $base_url . $filter_args)); ?>"><?php echo $i; ?></a>
+                        <?php endif;
+                    endfor; ?>
+                </div>
+            </div>
+            <?php endif; ?>
+        </div>
+
+        <script>
+        jQuery(function($){
+            $('#sgai-log-filter').on('click',function(){
+                var s=$('#sgai-log-status').val(),t=$('#sgai-log-trigger').val();
+                var url='<?php echo esc_js($base_url); ?>';
+                if(s)url+='&status_filter='+s;
+                if(t)url+='&trigger_filter='+t;
+                window.location.href=url;
+            });
+        });
+        </script>
         <?php
     }
 }
 
-// AJAX handler for bulk: get posts without schema
+// =============================================================================
+//  AJAX Handlers
+// =============================================================================
+
+// Missing posts for bulk — includes all enabled post types
 add_action('wp_ajax_sgai_bulk_get_posts', function () {
     check_ajax_referer('schema_genie_ai_nonce', 'nonce');
     if (!current_user_can('manage_options')) wp_send_json_error();
 
     global $wpdb;
+    $enabled = Schema_Genie_AI_Settings::get_enabled_post_types();
+    $types_in = "'" . implode("','", array_map('esc_sql', $enabled)) . "'";
+
     $post_ids = $wpdb->get_col("
         SELECT p.ID FROM {$wpdb->posts} p
         LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = '_schema_genie_ai_status'
-        WHERE p.post_type = 'post'
+        WHERE p.post_type IN ({$types_in})
         AND p.post_status = 'publish'
         AND (pm.meta_value IS NULL OR pm.meta_value != 'success')
         ORDER BY p.ID ASC
@@ -644,7 +581,30 @@ add_action('wp_ajax_sgai_bulk_get_posts', function () {
     wp_send_json_success(['post_ids' => array_map('intval', $post_ids)]);
 });
 
-// AJAX handler: Test API connection
+// Bulk start — acquire global lock
+add_action('wp_ajax_sgai_bulk_start', function () {
+    check_ajax_referer('schema_genie_ai_nonce', 'nonce');
+    if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'Not authorized']);
+
+    if (get_transient('sgai_bulk_running')) {
+        $running_user = get_transient('sgai_bulk_running');
+        wp_send_json_error(['message' => 'Bulk generation is already running (started by user ID: ' . $running_user . '). Please wait for it to finish.']);
+    }
+
+    set_transient('sgai_bulk_running', get_current_user_id(), 3600);
+    wp_send_json_success(['message' => 'Bulk lock acquired.']);
+});
+
+// Bulk complete — release global lock
+add_action('wp_ajax_sgai_bulk_complete', function () {
+    check_ajax_referer('schema_genie_ai_nonce', 'nonce');
+    if (!current_user_can('manage_options')) wp_send_json_error();
+
+    delete_transient('sgai_bulk_running');
+    wp_send_json_success();
+});
+
+// Test API connection
 add_action('wp_ajax_sgai_test_connection', function () {
     check_ajax_referer('schema_genie_ai_nonce', 'nonce');
     if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'Not authorized']);
@@ -658,23 +618,15 @@ add_action('wp_ajax_sgai_test_connection', function () {
 
     if (empty($endpoint)) wp_send_json_error(['message' => 'Azure endpoint is not configured. Save your endpoint first.']);
 
-    $url = rtrim($endpoint, '/') .
-           '/openai/deployments/' . urlencode($model) .
-           '/chat/completions?api-version=' . urlencode($api_version);
+    $url = rtrim($endpoint, '/') . '/openai/deployments/' . urlencode($model) . '/chat/completions?api-version=' . urlencode($api_version);
 
     $response = wp_remote_post($url, [
         'headers' => ['Content-Type' => 'application/json', 'api-key' => $api_key],
-        'body' => wp_json_encode([
-            'messages' => [['role' => 'user', 'content' => 'Say "OK" in one word.']],
-            'max_tokens' => 5,
-        ]),
-        'timeout' => 15,
-        'sslverify' => true,
+        'body' => wp_json_encode(['messages' => [['role' => 'user', 'content' => 'Say "OK" in one word.']], 'max_tokens' => 5]),
+        'timeout' => 15, 'sslverify' => true,
     ]);
 
-    if (is_wp_error($response)) {
-        wp_send_json_error(['message' => 'Network error: ' . $response->get_error_message()]);
-    }
+    if (is_wp_error($response)) wp_send_json_error(['message' => 'Network error: ' . $response->get_error_message()]);
 
     $code = wp_remote_retrieve_response_code($response);
     $body = wp_remote_retrieve_body($response);
