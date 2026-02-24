@@ -3,7 +3,7 @@
  * Plugin Name: Schema Genie AI
  * Plugin URI:  https://wordpress.org/plugins/schema-genie-ai/
  * Description: AI-powered JSON-LD structured data generator. Automatically creates Article, LegalService, FAQPage, and HowTo schema markup based on your content using Azure OpenAI.
- * Version:     1.2.9
+ * Version:     1.2.10
  * Author:      Schema Genie
  * Author URI:  https://wordpress.org/plugins/schema-genie-ai/
  * License:     GPL v2 or later
@@ -13,7 +13,7 @@
 defined('ABSPATH') || exit;
 
 // Plugin constants
-define('SCHEMA_GENIE_AI_VERSION', '1.2.9');
+define('SCHEMA_GENIE_AI_VERSION', '1.2.10');
 define('SCHEMA_GENIE_AI_PATH', plugin_dir_path(__FILE__));
 define('SCHEMA_GENIE_AI_URL', plugin_dir_url(__FILE__));
 
