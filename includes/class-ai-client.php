@@ -8,9 +8,10 @@ defined('ABSPATH') || exit;
 class Schema_Genie_AI_Client {
 
     /**
-     * Rate limit: max calls per minute (stored as transient).
+     * Rate limit: max calls per minute.
+     * Set to 9 for safety margin (API limit is 10).
      */
-    const RATE_LIMIT = 10;
+    const RATE_LIMIT = 9;
     const RATE_WINDOW = 60; // seconds
 
     /**
@@ -22,8 +23,11 @@ class Schema_Genie_AI_Client {
      * @throws Exception On error or invalid response.
      */
     public function call(string $system_prompt, string $user_prompt): array {
-        // Check rate limit
+        // Check rate limit BEFORE making the call
         $this->check_rate_limit();
+
+        // Record this call timestamp immediately
+        $this->record_rate_call();
 
         // Build request
         $api_key = Schema_Genie_AI_Settings::get_api_key();
@@ -69,9 +73,6 @@ class Schema_Genie_AI_Client {
             'timeout'   => $timeout,
             'sslverify' => true,
         ]);
-
-        // Increment rate limit counter
-        $this->increment_rate_limit();
 
         // Handle WP errors (network, timeout, etc.)
         if (is_wp_error($response)) {
@@ -142,25 +143,50 @@ class Schema_Genie_AI_Client {
     }
 
     /**
-     * Check if we've exceeded the rate limit.
+     * Get call timestamps within the current rate window (sliding window).
+     *
+     * @return array Array of Unix timestamps of recent calls.
+     */
+    private function get_rate_calls(): array {
+        $calls = get_transient('sgai_rate_timestamps');
+        if (!is_array($calls)) {
+            return [];
+        }
+        // Prune calls older than the rate window
+        $cutoff = time() - self::RATE_WINDOW;
+        return array_values(array_filter($calls, function ($ts) use ($cutoff) {
+            return $ts > $cutoff;
+        }));
+    }
+
+    /**
+     * Check if we've exceeded the rate limit using a sliding window.
+     *
+     * @throws Exception If rate limit is exceeded.
      */
     private function check_rate_limit() {
-        $count = (int) get_transient('schema_genie_ai_rate_count');
-        if ($count >= self::RATE_LIMIT) {
+        $recent_calls = $this->get_rate_calls();
+        if (count($recent_calls) >= self::RATE_LIMIT) {
+            // Calculate how many seconds until the oldest call expires
+            $oldest = min($recent_calls);
+            $wait = ($oldest + self::RATE_WINDOW) - time();
             throw new Exception(
                 sprintf(
-                    __('Rate limit reached (%d calls/minute). Please wait and try again.', 'schema-genie-ai'),
-                    self::RATE_LIMIT
+                    __('Rate limit reached (%d calls/minute). Please wait %d seconds and try again.', 'schema-genie-ai'),
+                    self::RATE_LIMIT,
+                    max(1, $wait)
                 )
             );
         }
     }
 
     /**
-     * Increment the rate limit counter.
+     * Record a new API call timestamp for rate limiting.
      */
-    private function increment_rate_limit() {
-        $count = (int) get_transient('schema_genie_ai_rate_count');
-        set_transient('schema_genie_ai_rate_count', $count + 1, self::RATE_WINDOW);
+    private function record_rate_call() {
+        $calls = $this->get_rate_calls();
+        $calls[] = time();
+        // Store with a generous TTL (2x window) so stale data gets cleaned up
+        set_transient('sgai_rate_timestamps', $calls, self::RATE_WINDOW * 2);
     }
 }

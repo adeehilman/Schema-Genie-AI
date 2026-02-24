@@ -559,12 +559,12 @@ class Schema_Genie_AI_Settings {
                                 $('#sgai-log-'+id).replaceWith('<div class="item">❌ <strong>#'+id+'</strong> — '+(r.data.message||'Unknown error')+'</div>');
                                 $('.sgai-status-'+id).html('<span style="color:#d63638">❌ Error</span>');
                             }
-                            setTimeout(next,3000);
+                            setTimeout(next,7000);
                         }).fail(function(){
                             errors++;
                             $('#sgai-log-'+id).replaceWith('<div class="item">❌ <strong>#'+id+'</strong> — Request failed</div>');
                             $('.sgai-status-'+id).html('<span style="color:#d63638">❌ Error</span>');
-                            setTimeout(next,3000);
+                            setTimeout(next,7000);
                         });
                     }
 
