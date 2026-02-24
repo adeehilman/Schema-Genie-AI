@@ -491,13 +491,20 @@ class Schema_Genie_AI_Settings {
                     <div id="sgai-queue-bar" style="background:#2271b1;height:100%;width:0%;transition:width .3s;"></div>
                 </div>
                 <p id="sgai-queue-status" style="font-size:13px;color:#666;margin:6px 0;"></p>
+                <div id="sgai-queue-remaining" style="margin:8px 0;display:none;">
+                    <strong style="font-size:12px;color:#666;text-transform:uppercase;">Queued Items:</strong>
+                    <div id="sgai-queue-items" style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;"></div>
+                </div>
                 <div id="sgai-queue-log" class="sgai-queue-log"></div>
+                <div style="margin-top:10px;display:flex;gap:8px;">
+                    <button type="button" id="sgai-queue-clear" class="button button-small" style="display:none;">🗑 <?php esc_html_e('Clear Queue Panel', 'schema-genie-ai'); ?></button>
+                </div>
             </div>
         </div>
 
         <script>
         jQuery(function($){
-            var nonce='<?php echo esc_js($nonce); ?>',running=false,stopRequested=false;
+            var nonce='<?php echo esc_js($nonce); ?>',running=false;
             var filterBaseUrl=<?php echo wp_json_encode($base_url_js); ?>;
 
             // Filter button
@@ -518,71 +525,213 @@ class Schema_Genie_AI_Settings {
             $(document).on('change','.sgai-row-cb',toggleBulkBtn);
             function toggleBulkBtn(){$('#sgai-bulk-generate').prop('disabled',$('.sgai-row-cb:checked').length===0||running)}
 
-            // Bulk Generate
+            // ---- Queue UI Helpers ----
+            var $panel=$('#sgai-queue-panel'),$bar=$('#sgai-queue-bar'),$status=$('#sgai-queue-status');
+            var $log=$('#sgai-queue-log'),$items=$('#sgai-queue-items'),$remaining=$('#sgai-queue-remaining');
+
+            function showQueuePanel(){$panel.show();}
+
+            function updateProgress(done,total,errors){
+                var pct=total>0?((done/total)*100):0;
+                $bar.css('width',pct+'%');
+                $status.text('Processing '+done+' of '+total+(errors>0?' ('+errors+' errors)':'')+'...');
+            }
+
+            function renderLog(logArr){
+                $log.empty();
+                for(var i=logArr.length-1;i>=0;i--){
+                    var e=logArr[i],icon='⏳',color='#666';
+                    if(e.status==='success'){icon='✅';color='#00a32a';}
+                    else if(e.status==='error'){icon='❌';color='#d63638';}
+                    else if(e.status==='removed'){icon='🚫';color='#8c8f94';}
+                    $log.append('<div class="item" style="color:'+color+'">'+icon+' <strong>#'+e.id+'</strong> '+escHtml(e.title)+' — '+escHtml(e.message)+'</div>');
+                }
+            }
+
+            function renderQueuedItems(ids){
+                if(!ids||ids.length===0){$remaining.hide();return;}
+                $remaining.show();
+                $items.empty();
+                ids.forEach(function(id){
+                    var title=getRowTitle(id);
+                    $items.append(
+                        '<span class="sgai-queued-item" data-id="'+id+'" style="display:inline-flex;align-items:center;gap:4px;background:#f0f0f1;border:1px solid #ddd;border-radius:4px;padding:2px 8px;font-size:12px;">'+
+                        '🕐 #'+id+(title?' '+escHtml(title):'')+
+                        ' <button type="button" class="sgai-remove-item" data-id="'+id+'" title="Remove from queue" style="background:none;border:none;color:#d63638;cursor:pointer;font-size:14px;padding:0 2px;line-height:1;">✕</button>'+
+                        '</span>'
+                    );
+                });
+            }
+
+            function getRowTitle(id){
+                var $link=$('#sgai-missing-table tr td a').filter(function(){
+                    return $(this).closest('tr').find('.sgai-row-cb').val()==id;
+                });
+                return $link.length?$link.text():'';
+            }
+
+            function escHtml(s){
+                if(!s)return '';
+                return $('<span>').text(s).html();
+            }
+
+            function updateRowStatus(id,status){
+                var badge='';
+                if(status==='success') badge='<span style="color:#00a32a">✅ Done</span>';
+                else if(status==='error') badge='<span style="color:#d63638">❌ Error</span>';
+                else if(status==='generating') badge='<span style="color:#2271b1"><span class="spinner is-active" style="float:none;margin:0 4px 0 0;"></span>In Progress</span>';
+                else if(status==='queued') badge='<span style="color:#8c8f94">🕐 Queued</span>';
+                else if(status==='removed') badge='<span style="color:#8c8f94">🚫 Removed</span>';
+                if(badge) $('.sgai-status-'+id).html(badge);
+            }
+
+            // ---- Remove single item from queue ----
+            $(document).on('click','.sgai-remove-item',function(e){
+                e.preventDefault();
+                var rid=$(this).data('id');
+                $.post(ajaxurl,{action:'sgai_bulk_remove_item',nonce:nonce,post_id:rid},function(r){
+                    if(r.success){
+                        $('.sgai-queued-item[data-id="'+rid+'"]').remove();
+                        updateRowStatus(rid,'removed');
+                    }
+                });
+            });
+
+            // ---- Bulk Generate Button ----
             $('#sgai-bulk-generate').on('click',function(){
                 var ids=[];$('.sgai-row-cb:checked').each(function(){ids.push($(this).val())});
                 if(!ids.length)return;
                 if(!confirm('Generate schemas for '+ids.length+' posts? Each call uses API tokens.'))return;
 
-                // Acquire bulk lock
-                $.post(ajaxurl,{action:'sgai_bulk_start',nonce:nonce},function(r){
-                    if(!r.success){alert(r.data.message||'Bulk lock failed');return;}
-                    running=true;stopRequested=false;
+                // Send IDs to server and start queue
+                $.post(ajaxurl,{action:'sgai_bulk_start',nonce:nonce,post_ids:ids},function(r){
+                    if(!r.success){
+                        // Check if we can offer Force Unlock
+                        if(r.data && r.data.can_force){
+                            if(confirm(r.data.message+'\n\nDo you want to Force Unlock and start a new generation?')){
+                                $.post(ajaxurl,{action:'sgai_bulk_force_unlock',nonce:nonce},function(fr){
+                                    if(fr.success){
+                                        // Retry starting the queue
+                                        $('#sgai-bulk-generate').trigger('click');
+                                    } else {
+                                        alert('Force unlock failed.');
+                                    }
+                                });
+                            }
+                        } else {
+                            alert(r.data.message||'Failed to start');
+                        }
+                        return;
+                    }
+                    running=true;
                     $('#sgai-bulk-generate').prop('disabled',true);
                     $('#sgai-bulk-stop').show();
-                    $('#sgai-queue-panel').show();
-                    var $bar=$('#sgai-queue-bar'),$status=$('#sgai-queue-status'),$log=$('#sgai-queue-log');
+                    $('#sgai-queue-clear').hide();
+                    showQueuePanel();
                     $log.empty();
-                    var total=ids.length,done=0,errors=0;
 
-                    // Mark all selected rows as Queued
-                    ids.forEach(function(qid){
-                        $('.sgai-status-'+qid).html('<span style="color:#8c8f94">🕐 Queued</span>');
-                    });
+                    // Mark rows as queued
+                    ids.forEach(function(qid){updateRowStatus(qid,'queued');});
+                    renderQueuedItems(ids);
+                    updateProgress(0,ids.length,0);
 
-                    function next(){
-                        if(stopRequested||ids.length===0){
-                            finish();return;
-                        }
-                        var id=ids.shift();done++;
-                        $status.text('Processing '+done+' of '+total+'...');
-                        $bar.css('width',((done/total)*100)+'%');
-                        // Show In Progress before AJAX call
-                        $('.sgai-status-'+id).html('<span style="color:#2271b1"><span class="spinner is-active" style="float:none;margin:0 4px 0 0;"></span>In Progress</span>');
-                        $log.prepend('<div class="item" id="sgai-log-'+id+'">⏳ <strong>#'+id+'</strong> — Processing...</div>');
-                        $.post(ajaxurl,{action:'sgai_generate_schema',post_id:id,nonce:nonce,trigger_type:'bulk'},function(r){
-                            if(r.success){
-                                $('#sgai-log-'+id).replaceWith('<div class="item">✅ <strong>#'+id+'</strong> — '+r.data.message+'</div>');
-                                $('.sgai-status-'+id).html('<span style="color:#00a32a">✅ Done</span>');
-                            }else{
-                                errors++;
-                                $('#sgai-log-'+id).replaceWith('<div class="item">❌ <strong>#'+id+'</strong> — '+(r.data.message||'Unknown error')+'</div>');
-                                $('.sgai-status-'+id).html('<span style="color:#d63638">❌ Error</span>');
-                            }
-                            setTimeout(next,7000);
-                        }).fail(function(){
-                            errors++;
-                            $('#sgai-log-'+id).replaceWith('<div class="item">❌ <strong>#'+id+'</strong> — Request failed</div>');
-                            $('.sgai-status-'+id).html('<span style="color:#d63638">❌ Error</span>');
-                            setTimeout(next,7000);
-                        });
-                    }
-
-                    function finish(){
-                        running=false;
-                        $status.text('Done! Generated: '+(done-errors)+', Errors: '+errors+(stopRequested?' (stopped by user)':''));
-                        $bar.css('width','100%');
-                        $('#sgai-bulk-stop').hide();
-                        $('#sgai-bulk-generate').prop('disabled',false);
-                        $.post(ajaxurl,{action:'sgai_bulk_complete',nonce:nonce});
-                    }
-
-                    next();
+                    // Start polling
+                    setTimeout(processNext,500);
                 });
             });
 
-            // Stop button
-            $('#sgai-bulk-stop').on('click',function(){stopRequested=true;$(this).prop('disabled',true).text('Stopping...');});
+            // ---- Process Next (polls server) ----
+            function processNext(){
+                $.post(ajaxurl,{action:'sgai_bulk_process_next',nonce:nonce},function(r){
+                    if(!r.success){
+                        finishQueue(0,0,0,false);
+                        return;
+                    }
+                    if(r.data.finished){
+                        finishQueue(r.data.total||0,r.data.done||0,r.data.errors||0,r.data.stopped||false);
+                        return;
+                    }
+
+                    // Update UI
+                    var d=r.data;
+                    updateProgress(d.done,d.total,d.errors);
+                    updateRowStatus(d.post_id, d.status);
+
+                    // Remove from queued items display
+                    $('.sgai-queued-item[data-id="'+d.post_id+'"]').remove();
+                    if($items.children().length===0) $remaining.hide();
+
+                    // Add to log
+                    var icon=d.status==='success'?'✅':'❌';
+                    var color=d.status==='success'?'#00a32a':'#d63638';
+                    $log.prepend('<div class="item" style="color:'+color+'">'+icon+' <strong>#'+d.post_id+'</strong> '+escHtml(d.title)+' — '+escHtml(d.message)+'</div>');
+
+                    // Continue after delay (rate limit safe)
+                    setTimeout(processNext,7000);
+                }).fail(function(){
+                    // Network error — retry after delay
+                    setTimeout(processNext,10000);
+                });
+            }
+
+            function finishQueue(total,done,errors,stopped){
+                running=false;
+                var msg='Done! Generated: '+(done-errors)+', Errors: '+errors;
+                if(stopped) msg+=' (stopped by user)';
+                $status.text(msg);
+                $bar.css('width','100%');
+                $remaining.hide();
+                $('#sgai-bulk-stop').hide();
+                $('#sgai-bulk-generate').prop('disabled',false);
+                $('#sgai-queue-clear').show();
+            }
+
+            // ---- Stop Button ----
+            $('#sgai-bulk-stop').on('click',function(){
+                $(this).prop('disabled',true).text('Stopping...');
+                $.post(ajaxurl,{action:'sgai_bulk_stop',nonce:nonce},function(){
+                    // processNext will detect stopped=true on next poll
+                });
+            });
+
+            // ---- Clear Queue Panel ----
+            $('#sgai-queue-clear').on('click',function(){
+                $.post(ajaxurl,{action:'sgai_bulk_complete',nonce:nonce},function(){
+                    $panel.hide();
+                    $log.empty();
+                    $items.empty();
+                    $remaining.hide();
+                    $('#sgai-queue-clear').hide();
+                    $bar.css('width','0%');
+                    $status.text('');
+                });
+            });
+
+            // ---- On Page Load: Check for active queue ----
+            $.post(ajaxurl,{action:'sgai_bulk_status',nonce:nonce},function(r){
+                if(!r.success||!r.data.active) return;
+
+                var q=r.data;
+                showQueuePanel();
+                renderLog(q.log||[]);
+                updateProgress(q.done,q.total,q.errors);
+
+                if(q.stopped||q.remaining===0){
+                    // Queue is finished or stopped — show final state
+                    finishQueue(q.total,q.done,q.errors,q.stopped);
+                } else {
+                    // Queue still has items — resume processing
+                    running=true;
+                    $('#sgai-bulk-generate').prop('disabled',true);
+                    $('#sgai-bulk-stop').show().prop('disabled',false).text('⏹ Stop');
+
+                    // Fetch remaining IDs for display
+                    renderQueuedItems(null); // Will be updated as items process
+                    $status.text('Resuming... '+q.done+' of '+q.total+' done.');
+
+                    setTimeout(processNext,1000);
+                }
+            });
         });
         </script>
         <?php
@@ -787,27 +936,217 @@ add_action('wp_ajax_sgai_bulk_get_posts', function () {
     wp_send_json_success(['post_ids' => array_map('intval', $post_ids)]);
 });
 
-// Bulk start — acquire global lock
+// Bulk start — acquire lock and store queue server-side
 add_action('wp_ajax_sgai_bulk_start', function () {
     check_ajax_referer('schema_genie_ai_nonce', 'nonce');
     if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'Not authorized']);
 
     if (get_transient('sgai_bulk_running')) {
-        $running_user = get_transient('sgai_bulk_running');
-        wp_send_json_error(['message' => 'Bulk generation is already running (started by user ID: ' . $running_user . '). Please wait for it to finish.']);
+        // Check if the lock is stale (no active queue, or queue is finished/stopped)
+        $queue = get_option('sgai_bulk_queue');
+        $is_stale = !$queue || !is_array($queue) || !empty($queue['stopped']) || empty($queue['ids']);
+
+        if ($is_stale) {
+            // Auto-clean stale lock
+            delete_transient('sgai_bulk_running');
+            delete_option('sgai_bulk_queue');
+        } else {
+            $running_user = get_transient('sgai_bulk_running');
+            wp_send_json_error([
+                'message' => 'Bulk generation is already running (started by user ID: ' . $running_user . '). Please wait for it to finish, or use Force Unlock.',
+                'can_force' => true,
+            ]);
+        }
+    }
+
+    $post_ids = isset($_POST['post_ids']) ? array_map('absint', (array) $_POST['post_ids']) : [];
+    if (empty($post_ids)) {
+        wp_send_json_error(['message' => 'No posts selected.']);
     }
 
     set_transient('sgai_bulk_running', get_current_user_id(), 3600);
-    wp_send_json_success(['message' => 'Bulk lock acquired.']);
+
+    // Store queue state server-side
+    update_option('sgai_bulk_queue', [
+        'ids'     => $post_ids,
+        'total'   => count($post_ids),
+        'done'    => 0,
+        'errors'  => 0,
+        'log'     => [],
+        'stopped' => false,
+        'current' => null,
+    ], false);
+
+    wp_send_json_success(['message' => 'Bulk queue started.', 'total' => count($post_ids)]);
 });
 
-// Bulk complete — release global lock
+// Bulk status — check queue state (used on page load)
+add_action('wp_ajax_sgai_bulk_status', function () {
+    check_ajax_referer('schema_genie_ai_nonce', 'nonce');
+    if (!current_user_can('manage_options')) wp_send_json_error();
+
+    $queue = get_option('sgai_bulk_queue');
+    if (!$queue || !is_array($queue)) {
+        // Auto-clean orphaned lock if no queue exists
+        if (get_transient('sgai_bulk_running')) {
+            delete_transient('sgai_bulk_running');
+        }
+        wp_send_json_success(['active' => false]);
+        return;
+    }
+
+    wp_send_json_success([
+        'active'    => true,
+        'total'     => $queue['total'],
+        'done'      => $queue['done'],
+        'errors'    => $queue['errors'],
+        'remaining' => count($queue['ids']),
+        'log'       => array_slice($queue['log'], -50), // Last 50 entries
+        'stopped'   => $queue['stopped'],
+        'current'   => $queue['current'],
+    ]);
+});
+
+// Bulk process next — process one item from the queue server-side
+add_action('wp_ajax_sgai_bulk_process_next', function () {
+    check_ajax_referer('schema_genie_ai_nonce', 'nonce');
+    if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'Not authorized']);
+
+    $queue = get_option('sgai_bulk_queue');
+    if (!$queue || !is_array($queue)) {
+        wp_send_json_success(['finished' => true]);
+        return;
+    }
+
+    // Check if stopped or empty
+    if ($queue['stopped'] || empty($queue['ids'])) {
+        $queue['current'] = null;
+        update_option('sgai_bulk_queue', $queue, false);
+        wp_send_json_success([
+            'finished' => true,
+            'total'    => $queue['total'],
+            'done'     => $queue['done'],
+            'errors'   => $queue['errors'],
+            'stopped'  => $queue['stopped'],
+        ]);
+        return;
+    }
+
+    // Take the next ID
+    $post_id = array_shift($queue['ids']);
+    $queue['done']++;
+    $queue['current'] = $post_id;
+    update_option('sgai_bulk_queue', $queue, false);
+
+    // Process the schema generation
+    $post_title = get_the_title($post_id) ?: '#' . $post_id;
+    try {
+        $generator = new Schema_Genie_AI_Generator();
+        $generator->generate($post_id, 'bulk');
+
+        $queue['log'][] = [
+            'id'      => $post_id,
+            'title'   => $post_title,
+            'status'  => 'success',
+            'message' => 'Schema generated successfully',
+        ];
+    } catch (Exception $e) {
+        $queue['errors']++;
+        update_post_meta($post_id, '_schema_genie_ai_status', 'error');
+        update_post_meta($post_id, '_schema_genie_ai_error', $e->getMessage());
+
+        $queue['log'][] = [
+            'id'      => $post_id,
+            'title'   => $post_title,
+            'status'  => 'error',
+            'message' => $e->getMessage(),
+        ];
+    }
+
+    $queue['current'] = null;
+    // Keep only last 100 log entries
+    if (count($queue['log']) > 100) {
+        $queue['log'] = array_slice($queue['log'], -100);
+    }
+    update_option('sgai_bulk_queue', $queue, false);
+
+    wp_send_json_success([
+        'finished'  => false,
+        'post_id'   => $post_id,
+        'title'     => $post_title,
+        'status'    => end($queue['log'])['status'],
+        'message'   => end($queue['log'])['message'],
+        'total'     => $queue['total'],
+        'done'      => $queue['done'],
+        'errors'    => $queue['errors'],
+        'remaining' => count($queue['ids']),
+    ]);
+});
+
+// Bulk stop — flag the queue to stop
+add_action('wp_ajax_sgai_bulk_stop', function () {
+    check_ajax_referer('schema_genie_ai_nonce', 'nonce');
+    if (!current_user_can('manage_options')) wp_send_json_error();
+
+    $queue = get_option('sgai_bulk_queue');
+    if ($queue && is_array($queue)) {
+        $queue['stopped'] = true;
+        $queue['current'] = null;
+        update_option('sgai_bulk_queue', $queue, false);
+    }
+    delete_transient('sgai_bulk_running');
+    wp_send_json_success();
+});
+
+// Bulk remove item — remove a single post from the queue
+add_action('wp_ajax_sgai_bulk_remove_item', function () {
+    check_ajax_referer('schema_genie_ai_nonce', 'nonce');
+    if (!current_user_can('manage_options')) wp_send_json_error();
+
+    $remove_id = isset($_POST['post_id']) ? absint($_POST['post_id']) : 0;
+    if (!$remove_id) wp_send_json_error(['message' => 'Invalid post ID']);
+
+    $queue = get_option('sgai_bulk_queue');
+    if (!$queue || !is_array($queue)) {
+        wp_send_json_error(['message' => 'No active queue']);
+        return;
+    }
+
+    // Remove from remaining IDs
+    $queue['ids'] = array_values(array_filter($queue['ids'], function ($id) use ($remove_id) {
+        return (int) $id !== $remove_id;
+    }));
+
+    // Add to log as removed
+    $queue['log'][] = [
+        'id'      => $remove_id,
+        'title'   => get_the_title($remove_id) ?: '#' . $remove_id,
+        'status'  => 'removed',
+        'message' => 'Removed from queue by user',
+    ];
+
+    update_option('sgai_bulk_queue', $queue, false);
+    wp_send_json_success(['remaining' => count($queue['ids'])]);
+});
+
+// Bulk complete — clean up everything
 add_action('wp_ajax_sgai_bulk_complete', function () {
     check_ajax_referer('schema_genie_ai_nonce', 'nonce');
     if (!current_user_can('manage_options')) wp_send_json_error();
 
     delete_transient('sgai_bulk_running');
+    delete_option('sgai_bulk_queue');
     wp_send_json_success();
+});
+
+// Force unlock — manually clear stale locks
+add_action('wp_ajax_sgai_bulk_force_unlock', function () {
+    check_ajax_referer('schema_genie_ai_nonce', 'nonce');
+    if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'Not authorized']);
+
+    delete_transient('sgai_bulk_running');
+    delete_option('sgai_bulk_queue');
+    wp_send_json_success(['message' => 'Lock cleared. You can now start a new bulk generation.']);
 });
 
 // Test API connection
