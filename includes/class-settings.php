@@ -725,8 +725,13 @@ class Schema_Genie_AI_Settings {
                     $('#sgai-bulk-generate').prop('disabled',true);
                     $('#sgai-bulk-stop').show().prop('disabled',false).text('⏹ Stop');
 
-                    // Fetch remaining IDs for display
-                    renderQueuedItems(null); // Will be updated as items process
+                    // Mark queued rows in the table and show queued items panel
+                    var queueIds = q.ids || [];
+                    queueIds.forEach(function(qid){
+                        updateRowStatus(qid, 'queued');
+                    });
+                    if(q.current) updateRowStatus(q.current, 'generating');
+                    renderQueuedItems(queueIds);
                     $status.text('Resuming... '+q.done+' of '+q.total+' done.');
 
                     setTimeout(processNext,1000);
@@ -1001,7 +1006,8 @@ add_action('wp_ajax_sgai_bulk_status', function () {
         'done'      => $queue['done'],
         'errors'    => $queue['errors'],
         'remaining' => count($queue['ids']),
-        'log'       => array_slice($queue['log'], -50), // Last 50 entries
+        'ids'       => array_values($queue['ids']),
+        'log'       => array_slice($queue['log'], -50),
         'stopped'   => $queue['stopped'],
         'current'   => $queue['current'],
     ]);
