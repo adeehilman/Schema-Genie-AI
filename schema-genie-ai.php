@@ -3,7 +3,7 @@
  * Plugin Name: Schema Genie AI
  * Plugin URI:  https://wordpress.org/plugins/schema-genie-ai/
  * Description: AI-powered JSON-LD structured data generator. Automatically creates Article, LegalService, FAQPage, and HowTo schema markup based on your content using Azure OpenAI.
- * Version:     1.1.12
+ * Version:     1.2.8
  * Author:      Schema Genie
  * Author URI:  https://wordpress.org/plugins/schema-genie-ai/
  * License:     GPL v2 or later
@@ -13,7 +13,7 @@
 defined('ABSPATH') || exit;
 
 // Plugin constants
-define('SCHEMA_GENIE_AI_VERSION', '1.2.0');
+define('SCHEMA_GENIE_AI_VERSION', '1.2.8');
 define('SCHEMA_GENIE_AI_PATH', plugin_dir_path(__FILE__));
 define('SCHEMA_GENIE_AI_URL', plugin_dir_url(__FILE__));
 
@@ -50,6 +50,7 @@ class Schema_Genie_AI_Plugin {
             add_action('wp_ajax_sgai_generate_schema', [$this, 'ajax_generate_schema']);
             add_action('wp_ajax_sgai_clear_schema', [$this, 'ajax_clear_schema']);
             add_action('wp_ajax_sgai_preview_schema', [$this, 'ajax_preview_schema']);
+            add_action('wp_ajax_sgai_backfill_logs', [$this, 'ajax_backfill_logs']);
         }
 
         // Frontend injection
@@ -137,6 +138,26 @@ class Schema_Genie_AI_Plugin {
         ]);
     }
 
+    /**
+     * AJAX: Backfill missing log entries.
+     */
+    public function ajax_backfill_logs() {
+        check_ajax_referer('schema_genie_ai_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => __('Unauthorized.', 'schema-genie-ai')]);
+        }
+
+        $count = Schema_Genie_AI_Request_Log::backfill();
+
+        wp_send_json_success([
+            'message' => sprintf(
+                _n('%d missing log entry synced.', '%d missing log entries synced.', $count, 'schema-genie-ai'),
+                $count
+            ),
+            'count' => $count,
+        ]);
+    }
     /**
      * AJAX: Preview final JSON-LD for a post.
      */
@@ -246,4 +267,11 @@ register_activation_hook(__FILE__, function () {
 // Initialize
 add_action('plugins_loaded', function () {
     Schema_Genie_AI_Plugin::instance();
+
+    // Ensure DB table exists (runs on updates too, not just activation)
+    $db_version = get_option('schema_genie_ai_db_version', '0');
+    if (version_compare($db_version, SCHEMA_GENIE_AI_VERSION, '<')) {
+        Schema_Genie_AI_Request_Log::create_table();
+        update_option('schema_genie_ai_db_version', SCHEMA_GENIE_AI_VERSION);
+    }
 });

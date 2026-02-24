@@ -217,4 +217,70 @@ class Schema_Genie_AI_Request_Log {
             $days
         ));
     }
+
+    /**
+     * Backfill missing log entries for posts that have schemas but no log record.
+     *
+     * @return int Number of log entries created.
+     */
+    public static function backfill(): int {
+        global $wpdb;
+        $table = self::table_name();
+        $count = 0;
+
+        // Find posts with schema status but no matching log entry
+        $posts = $wpdb->get_results(
+            "SELECT p.ID, p.post_title, p.post_type,
+                    pm_status.meta_value AS schema_status,
+                    COALESCE(pm_gen.meta_value, '') AS generated_at,
+                    COALESCE(pm_tokens.meta_value, '') AS tokens_data,
+                    COALESCE(pm_error.meta_value, '') AS error_msg
+             FROM {$wpdb->posts} p
+             INNER JOIN {$wpdb->postmeta} pm_status
+                 ON p.ID = pm_status.post_id AND pm_status.meta_key = '_schema_genie_ai_status'
+             LEFT JOIN {$wpdb->postmeta} pm_gen
+                 ON p.ID = pm_gen.post_id AND pm_gen.meta_key = '_schema_genie_ai_generated'
+             LEFT JOIN {$wpdb->postmeta} pm_tokens
+                 ON p.ID = pm_tokens.post_id AND pm_tokens.meta_key = '_schema_genie_ai_tokens'
+             LEFT JOIN {$wpdb->postmeta} pm_error
+                 ON p.ID = pm_error.post_id AND pm_error.meta_key = '_schema_genie_ai_error'
+             WHERE pm_status.meta_value IN ('success', 'error')
+               AND NOT EXISTS (
+                   SELECT 1 FROM {$table} l WHERE l.post_id = p.ID
+               )
+             ORDER BY p.ID ASC",
+            ARRAY_A
+        );
+
+        foreach ($posts as $row) {
+            $tokens = [];
+            if (!empty($row['tokens_data'])) {
+                $decoded = json_decode($row['tokens_data'], true);
+                if (is_array($decoded)) {
+                    $tokens = $decoded;
+                }
+            }
+
+            $created_at = !empty($row['generated_at']) ? $row['generated_at'] : current_time('mysql');
+
+            $wpdb->insert($table, [
+                'post_id'           => (int) $row['ID'],
+                'post_title'        => $row['post_title'] ?: '(no title)',
+                'post_type'         => $row['post_type'],
+                'trigger_type'      => 'backfill',
+                'triggered_by'      => 'system',
+                'status'            => $row['schema_status'],
+                'tokens_prompt'     => isset($tokens['prompt_tokens']) ? (int) $tokens['prompt_tokens'] : 0,
+                'tokens_completion' => isset($tokens['completion_tokens']) ? (int) $tokens['completion_tokens'] : 0,
+                'tokens_total'      => isset($tokens['total_tokens']) ? (int) $tokens['total_tokens'] : 0,
+                'error_message'     => $row['schema_status'] === 'error' ? $row['error_msg'] : null,
+                'duration_ms'       => 0,
+                'created_at'        => $created_at,
+            ], ['%d', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%s', '%d', '%s']);
+
+            $count++;
+        }
+
+        return $count;
+    }
 }

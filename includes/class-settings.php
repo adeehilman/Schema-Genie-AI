@@ -176,6 +176,17 @@ class Schema_Genie_AI_Settings {
             .sgai-card .lbl{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.5px}
             .sgai-queue-log{max-height:350px;overflow-y:auto;font-size:12px;border:1px solid #e0e0e0;border-radius:4px;padding:8px;background:#f9f9f9;margin-top:10px}
             .sgai-queue-log .item{padding:3px 0;border-bottom:1px solid #eee}
+            /* Pagination — Ant Design style */
+            .sgai-pagination{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap;justify-content:flex-end}
+            .sgai-pagination .sgai-perpage select{border:1px solid #d9d9d9;border-radius:6px;padding:4px 8px;font-size:13px;color:#333;background:#fff;cursor:pointer;height:32px}
+            .sgai-pagination .sgai-perpage select:hover{border-color:#1677ff}
+            .sgai-pagination .sgai-pg-btn{display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:32px;padding:0 8px;border:1px solid #d9d9d9;border-radius:6px;background:#fff;color:#333;font-size:13px;text-decoration:none;cursor:pointer;transition:all .2s;line-height:1;box-sizing:border-box}
+            .sgai-pagination .sgai-pg-btn:hover{border-color:#1677ff;color:#1677ff}
+            .sgai-pagination .sgai-pg-btn.active{border-color:#1677ff;color:#1677ff;font-weight:600}
+            .sgai-pagination .sgai-pg-btn.disabled{color:#d9d9d9;cursor:not-allowed;border-color:#d9d9d9}
+            .sgai-pagination .sgai-pg-btn.disabled:hover{color:#d9d9d9;border-color:#d9d9d9}
+            .sgai-pagination .sgai-pg-dots{display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:32px;color:#999;font-size:14px;letter-spacing:2px}
+            .sgai-pagination .sgai-pg-info{font-size:13px;color:#666;margin-right:8px}
         </style>
         <div class="wrap sgai-wrap">
             <div class="sgai-header">
@@ -192,7 +203,7 @@ class Schema_Genie_AI_Settings {
             <!-- Tabs Navigation -->
             <h2 class="nav-tab-wrapper">
                 <a href="?page=<?php echo self::PAGE_SLUG; ?>&tab=settings" class="nav-tab <?php echo $active_tab === 'settings' ? 'nav-tab-active' : ''; ?>">⚙️ <?php esc_html_e('Settings', 'schema-genie-ai'); ?></a>
-                <a href="?page=<?php echo self::PAGE_SLUG; ?>&tab=missing" class="nav-tab <?php echo $active_tab === 'missing' ? 'nav-tab-active' : ''; ?>">📋 <?php esc_html_e('Missing Schemas', 'schema-genie-ai'); ?></a>
+                <a href="?page=<?php echo self::PAGE_SLUG; ?>&tab=missing" class="nav-tab <?php echo $active_tab === 'missing' ? 'nav-tab-active' : ''; ?>">📋 <?php esc_html_e('Schema Overview', 'schema-genie-ai'); ?></a>
                 <a href="?page=<?php echo self::PAGE_SLUG; ?>&tab=log" class="nav-tab <?php echo $active_tab === 'log' ? 'nav-tab-active' : ''; ?>">📝 <?php esc_html_e('AI Request Log', 'schema-genie-ai'); ?></a>
             </h2>
 
@@ -272,25 +283,73 @@ class Schema_Genie_AI_Settings {
         $enabled_types = self::get_enabled_post_types();
         $types_in = "'" . implode("','", array_map('esc_sql', $enabled_types)) . "'";
 
-        // Filter
-        $filter_type = isset($_GET['post_type_filter']) ? sanitize_key($_GET['post_type_filter']) : '';
+        // WPML detection
+        $has_wpml = defined('ICL_SITEPRESS_VERSION') || function_exists('icl_get_languages');
+        $wpml_languages = [];
+        $icl_table = $wpdb->prefix . 'icl_translations';
+        if ($has_wpml) {
+            $wpml_languages = apply_filters('wpml_active_languages', [], ['skip_missing' => 0]);
+        }
+
+        // Filters
+        $filter_type   = isset($_GET['post_type_filter']) ? sanitize_key($_GET['post_type_filter']) : '';
+        $filter_lang   = isset($_GET['lang_filter']) ? sanitize_key($_GET['lang_filter']) : '';
+        $filter_status = isset($_GET['status_filter']) ? sanitize_key($_GET['status_filter']) : '';
         $paged = isset($_GET['paged']) ? max(1, (int) $_GET['paged']) : 1;
-        $per_page = 20;
+        $per_page = isset($_GET['per_page']) ? max(10, min(100, (int) $_GET['per_page'])) : 20;
         $offset = ($paged - 1) * $per_page;
 
         $where_type = $filter_type ? $wpdb->prepare("AND p.post_type = %s", $filter_type) : "AND p.post_type IN ({$types_in})";
 
-        $total = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->posts} p LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = '_schema_genie_ai_status' WHERE p.post_status = 'publish' {$where_type} AND (pm.meta_value IS NULL OR pm.meta_value != 'success')");
+        // Status filter
+        $where_status = '';
+        if ($filter_status === 'none') {
+            $where_status = "AND (pm.meta_value IS NULL OR pm.meta_value = '' OR pm.meta_value = 'none')";
+        } elseif ($filter_status === 'error') {
+            $where_status = "AND pm.meta_value = 'error'";
+        } elseif ($filter_status === 'generating') {
+            $where_status = "AND pm.meta_value = 'generating'";
+        } elseif ($filter_status === 'success') {
+            $where_status = "AND pm.meta_value = 'success'";
+        } elseif ($filter_status === 'missing') {
+            $where_status = "AND (pm.meta_value IS NULL OR pm.meta_value != 'success')";
+        }
 
-        $posts = $wpdb->get_results("SELECT p.ID, p.post_title, p.post_type, p.post_date, COALESCE(pm.meta_value, 'none') as schema_status, COALESCE(pe.meta_value, '') as schema_error FROM {$wpdb->posts} p LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = '_schema_genie_ai_status' LEFT JOIN {$wpdb->postmeta} pe ON p.ID = pe.post_id AND pe.meta_key = '_schema_genie_ai_error' WHERE p.post_status = 'publish' {$where_type} AND (pm.meta_value IS NULL OR pm.meta_value != 'success') ORDER BY p.ID DESC LIMIT {$per_page} OFFSET {$offset}", ARRAY_A);
+        // WPML language join & filter
+        $join_wpml = '';
+        $where_lang = '';
+        $select_lang = '';
+        if ($has_wpml) {
+            $join_wpml = " LEFT JOIN {$icl_table} icl ON p.ID = icl.element_id AND icl.element_type = CONCAT('post_', p.post_type)";
+            $select_lang = ", COALESCE(icl.language_code, '--') as lang_code";
+            if ($filter_lang) {
+                $where_lang = $wpdb->prepare(" AND icl.language_code = %s", $filter_lang);
+            }
+        }
+
+        $total = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->posts} p LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = '_schema_genie_ai_status' {$join_wpml} WHERE p.post_status = 'publish' {$where_type} {$where_lang} {$where_status}");
+
+        $posts = $wpdb->get_results("SELECT p.ID, p.post_title, p.post_type, p.post_date, COALESCE(pm.meta_value, 'none') as schema_status, COALESCE(pe.meta_value, '') as schema_error {$select_lang} FROM {$wpdb->posts} p LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = '_schema_genie_ai_status' LEFT JOIN {$wpdb->postmeta} pe ON p.ID = pe.post_id AND pe.meta_key = '_schema_genie_ai_error' {$join_wpml} WHERE p.post_status = 'publish' {$where_type} {$where_lang} {$where_status} ORDER BY p.ID DESC LIMIT {$per_page} OFFSET {$offset}", ARRAY_A);
 
         $total_pages = ceil($total / $per_page);
         $public_types = get_post_types(['public' => true], 'objects');
         unset($public_types['attachment']);
         $base_url = admin_url('options-general.php?page=' . self::PAGE_SLUG . '&tab=missing');
+        // Raw URL for JS (admin_url returns &amp; which breaks JS)
+        $base_url_js = esc_url_raw($base_url);
+
+        // Language flag map for display
+        $lang_flags = [];
+        $lang_names = [];
+        if ($has_wpml && !empty($wpml_languages)) {
+            foreach ($wpml_languages as $code => $info) {
+                $lang_flags[$code] = isset($info['country_flag_url']) ? $info['country_flag_url'] : '';
+                $lang_names[$code] = isset($info['translated_name']) ? $info['translated_name'] : strtoupper($code);
+            }
+        }
         ?>
         <div class="sgai-section-box" style="margin-top:16px;">
-            <h2>📋 <?php esc_html_e('Posts & Pages Missing Schemas', 'schema-genie-ai'); ?> <span style="font-weight:normal;font-size:13px;color:#666;">(<?php echo esc_html($total); ?> found)</span></h2>
+            <h2>📋 <?php esc_html_e('Schema Overview', 'schema-genie-ai'); ?> <span style="font-weight:normal;font-size:13px;color:#666;">(<?php echo esc_html($total); ?> found)</span></h2>
 
             <!-- Filters -->
             <div style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -300,6 +359,24 @@ class Schema_Genie_AI_Settings {
                         <option value="<?php echo esc_attr($slug); ?>" <?php selected($filter_type, $slug); ?>><?php echo esc_html($lbl); ?></option>
                     <?php endforeach; ?>
                 </select>
+                <select id="sgai-status-filter" style="min-width:120px;">
+                    <option value=""><?php esc_html_e('All Statuses', 'schema-genie-ai'); ?></option>
+                    <option value="missing" <?php selected($filter_status, 'missing'); ?>><?php esc_html_e('Missing (All)', 'schema-genie-ai'); ?></option>
+                    <option value="none" <?php selected($filter_status, 'none'); ?>><?php esc_html_e('None', 'schema-genie-ai'); ?></option>
+                    <option value="error" <?php selected($filter_status, 'error'); ?>><?php esc_html_e('Error', 'schema-genie-ai'); ?></option>
+                    <option value="generating" <?php selected($filter_status, 'generating'); ?>><?php esc_html_e('Generating', 'schema-genie-ai'); ?></option>
+                    <option value="success" <?php selected($filter_status, 'success'); ?>><?php esc_html_e('✅ Done', 'schema-genie-ai'); ?></option>
+                </select>
+                <?php if ($has_wpml && !empty($wpml_languages)): ?>
+                <select id="sgai-lang-filter" style="min-width:120px;">
+                    <option value=""><?php esc_html_e('All Languages', 'schema-genie-ai'); ?></option>
+                    <?php foreach ($wpml_languages as $code => $info): ?>
+                        <option value="<?php echo esc_attr($code); ?>" <?php selected($filter_lang, $code); ?>>
+                            <?php echo esc_html(($info['translated_name'] ?? strtoupper($code)) . ' (' . strtoupper($code) . ')'); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <?php endif; ?>
                 <button type="button" id="sgai-filter-btn" class="button"><?php esc_html_e('Filter', 'schema-genie-ai'); ?></button>
                 <span style="flex:1"></span>
                 <button type="button" id="sgai-bulk-generate" class="button button-primary" disabled>🚀 <?php esc_html_e('Generate Selected', 'schema-genie-ai'); ?></button>
@@ -314,25 +391,40 @@ class Schema_Genie_AI_Settings {
                         <th style="width:50px">ID</th>
                         <th><?php esc_html_e('Title', 'schema-genie-ai'); ?></th>
                         <th style="width:100px"><?php esc_html_e('Type', 'schema-genie-ai'); ?></th>
+                        <?php if ($has_wpml): ?><th style="width:60px"><?php esc_html_e('Lang', 'schema-genie-ai'); ?></th><?php endif; ?>
                         <th style="width:100px"><?php esc_html_e('Status', 'schema-genie-ai'); ?></th>
                         <th style="width:120px"><?php esc_html_e('Published', 'schema-genie-ai'); ?></th>
                     </tr>
                 </thead>
                 <tbody>
+                    <?php $col_count = $has_wpml ? 7 : 6; ?>
                     <?php if (empty($posts)): ?>
-                        <tr><td colspan="6" style="text-align:center;padding:20px;color:#666;">🎉 <?php esc_html_e('All posts have schemas!', 'schema-genie-ai'); ?></td></tr>
+                        <tr><td colspan="<?php echo $col_count; ?>" style="text-align:center;padding:20px;color:#666;">📭 <?php esc_html_e('No posts found matching your filters.', 'schema-genie-ai'); ?></td></tr>
                     <?php else: foreach ($posts as $p):
                         $edit_link = get_edit_post_link($p['ID']);
                         $type_label = isset($public_types[$p['post_type']]) ? $public_types[$p['post_type']]->labels->singular_name : $p['post_type'];
-                        $status_badge = $p['schema_status'] === 'error'
-                            ? '<span style="color:#d63638" title="' . esc_attr($p['schema_error']) . '">❌ Error</span>'
-                            : '<span style="color:#888">— None</span>';
+                        $status_badge = match($p['schema_status']) {
+                            'success'    => '<span style="color:#00a32a">✅ Done</span>',
+                            'error'      => '<span style="color:#d63638" title="' . esc_attr($p['schema_error']) . '">❌ Error</span>',
+                            'generating' => '<span style="color:#2271b1">⏳ Generating</span>',
+                            default      => '<span style="color:#888">— None</span>',
+                        };
+                        $post_lang = isset($p['lang_code']) ? $p['lang_code'] : '';
+                        $lang_display = '';
+                        if ($has_wpml && $post_lang) {
+                            $flag_url = isset($lang_flags[$post_lang]) ? $lang_flags[$post_lang] : '';
+                            $lang_label = isset($lang_names[$post_lang]) ? $lang_names[$post_lang] : strtoupper($post_lang);
+                            $lang_display = $flag_url
+                                ? '<img src="' . esc_url($flag_url) . '" alt="' . esc_attr($post_lang) . '" style="width:18px;height:12px;vertical-align:middle;margin-right:4px;" />' . esc_html(strtoupper($post_lang))
+                                : esc_html(strtoupper($post_lang));
+                        }
                     ?>
                         <tr>
                             <th class="check-column"><input type="checkbox" class="sgai-row-cb" value="<?php echo esc_attr($p['ID']); ?>" /></th>
                             <td><?php echo esc_html($p['ID']); ?></td>
                             <td><a href="<?php echo esc_url($edit_link); ?>" target="_blank"><?php echo esc_html($p['post_title'] ?: '(no title)'); ?></a></td>
                             <td><?php echo esc_html($type_label); ?></td>
+                            <?php if ($has_wpml): ?><td><?php echo $lang_display ?: '<span style="color:#999">—</span>'; ?></td><?php endif; ?>
                             <td class="sgai-status-<?php echo esc_attr($p['ID']); ?>"><?php echo $status_badge; ?></td>
                             <td><?php echo esc_html(mysql2date('Y-m-d', $p['post_date'])); ?></td>
                         </tr>
@@ -341,16 +433,54 @@ class Schema_Genie_AI_Settings {
             </table>
 
             <!-- Pagination -->
-            <?php if ($total_pages > 1): ?>
-            <div class="tablenav bottom" style="margin-top:8px;">
-                <div class="tablenav-pages">
-                    <span class="displaying-num"><?php echo esc_html($total); ?> items</span>
-                    <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                        <?php if ($i === $paged): ?><span class="tablenav-pages-navspan button disabled"><?php echo $i; ?></span>
-                        <?php else: ?><a class="button" href="<?php echo esc_url(add_query_arg('paged', $i, $base_url . ($filter_type ? '&post_type_filter=' . $filter_type : ''))); ?>"><?php echo $i; ?></a>
-                        <?php endif; ?>
-                    <?php endfor; ?>
-                </div>
+            <?php if ($total_pages > 1):
+                $filter_args = '';
+                if ($filter_type) $filter_args .= '&post_type_filter=' . $filter_type;
+                if ($filter_lang) $filter_args .= '&lang_filter=' . $filter_lang;
+                if ($filter_status) $filter_args .= '&status_filter=' . $filter_status;
+                $pag_base = $base_url . $filter_args;
+            ?>
+            <div class="sgai-pagination">
+                <span class="sgai-pg-info"><?php echo esc_html($total); ?> items</span>
+                <span class="sgai-perpage">
+                    <select onchange="window.location.href='<?php echo esc_js($pag_base); ?>&per_page='+this.value">
+                        <?php foreach ([10, 20, 25, 50, 100] as $pp): ?>
+                            <option value="<?php echo $pp; ?>" <?php selected($per_page, $pp); ?>><?php echo $pp; ?> / page</option>
+                        <?php endforeach; ?>
+                    </select>
+                </span>
+                <?php if ($paged > 1): ?>
+                    <a class="sgai-pg-btn" href="<?php echo esc_url(add_query_arg(['paged' => $paged - 1, 'per_page' => $per_page], $pag_base)); ?>">&lsaquo;</a>
+                <?php else: ?>
+                    <span class="sgai-pg-btn disabled">&lsaquo;</span>
+                <?php endif; ?>
+                <?php
+                $range = 2;
+                $show_pages = [];
+                $show_pages[] = 1;
+                for ($i = max(2, $paged - $range); $i <= min($total_pages - 1, $paged + $range); $i++) {
+                    $show_pages[] = $i;
+                }
+                if ($total_pages > 1) $show_pages[] = $total_pages;
+                $show_pages = array_unique($show_pages);
+                sort($show_pages);
+                $prev = 0;
+                foreach ($show_pages as $pg):
+                    if ($prev && $pg - $prev > 1): ?>
+                        <span class="sgai-pg-dots">···</span>
+                    <?php endif;
+                    if ($pg === $paged): ?>
+                        <span class="sgai-pg-btn active"><?php echo $pg; ?></span>
+                    <?php else: ?>
+                        <a class="sgai-pg-btn" href="<?php echo esc_url(add_query_arg(['paged' => $pg, 'per_page' => $per_page], $pag_base)); ?>"><?php echo $pg; ?></a>
+                    <?php endif;
+                    $prev = $pg;
+                endforeach; ?>
+                <?php if ($paged < $total_pages): ?>
+                    <a class="sgai-pg-btn" href="<?php echo esc_url(add_query_arg(['paged' => $paged + 1, 'per_page' => $per_page], $pag_base)); ?>">&rsaquo;</a>
+                <?php else: ?>
+                    <span class="sgai-pg-btn disabled">&rsaquo;</span>
+                <?php endif; ?>
             </div>
             <?php endif; ?>
 
@@ -372,7 +502,14 @@ class Schema_Genie_AI_Settings {
             // Filter button
             $('#sgai-filter-btn').on('click',function(){
                 var f=$('#sgai-type-filter').val();
-                window.location.href='<?php echo esc_js($base_url); ?>'+(f?'&post_type_filter='+f:'');
+                var s=$('#sgai-status-filter').val();
+                var url='<?php echo esc_js($base_url_js); ?>'+(f?'&post_type_filter='+f:'');
+                if(s) url+='&status_filter='+s;
+                <?php if ($has_wpml): ?>
+                var l=$('#sgai-lang-filter').val();
+                if(l) url+='&lang_filter='+l;
+                <?php endif; ?>
+                window.location.href=url;
             });
 
             // Select all
@@ -397,6 +534,11 @@ class Schema_Genie_AI_Settings {
                     $log.empty();
                     var total=ids.length,done=0,errors=0;
 
+                    // Mark all selected rows as Queued
+                    ids.forEach(function(qid){
+                        $('.sgai-status-'+qid).html('<span style="color:#8c8f94">🕐 Queued</span>');
+                    });
+
                     function next(){
                         if(stopRequested||ids.length===0){
                             finish();return;
@@ -404,19 +546,23 @@ class Schema_Genie_AI_Settings {
                         var id=ids.shift();done++;
                         $status.text('Processing '+done+' of '+total+'...');
                         $bar.css('width',((done/total)*100)+'%');
+                        // Show In Progress before AJAX call
+                        $('.sgai-status-'+id).html('<span style="color:#2271b1"><span class="spinner is-active" style="float:none;margin:0 4px 0 0;"></span>In Progress</span>');
+                        $log.prepend('<div class="item" id="sgai-log-'+id+'">⏳ <strong>#'+id+'</strong> — Processing...</div>');
                         $.post(ajaxurl,{action:'sgai_generate_schema',post_id:id,nonce:nonce,trigger_type:'bulk'},function(r){
                             if(r.success){
-                                $log.prepend('<div class="item">✅ <strong>#'+id+'</strong> — '+r.data.message+'</div>');
+                                $('#sgai-log-'+id).replaceWith('<div class="item">✅ <strong>#'+id+'</strong> — '+r.data.message+'</div>');
                                 $('.sgai-status-'+id).html('<span style="color:#00a32a">✅ Done</span>');
                             }else{
                                 errors++;
-                                $log.prepend('<div class="item">❌ <strong>#'+id+'</strong> — '+(r.data.message||'Unknown error')+'</div>');
+                                $('#sgai-log-'+id).replaceWith('<div class="item">❌ <strong>#'+id+'</strong> — '+(r.data.message||'Unknown error')+'</div>');
                                 $('.sgai-status-'+id).html('<span style="color:#d63638">❌ Error</span>');
                             }
                             setTimeout(next,3000);
                         }).fail(function(){
                             errors++;
-                            $log.prepend('<div class="item">❌ <strong>#'+id+'</strong> — Request failed</div>');
+                            $('#sgai-log-'+id).replaceWith('<div class="item">❌ <strong>#'+id+'</strong> — Request failed</div>');
+                            $('.sgai-status-'+id).html('<span style="color:#d63638">❌ Error</span>');
                             setTimeout(next,3000);
                         });
                     }
@@ -449,7 +595,7 @@ class Schema_Genie_AI_Settings {
         $paged     = isset($_GET['paged']) ? max(1, (int) $_GET['paged']) : 1;
         $status_f  = isset($_GET['status_filter']) ? sanitize_key($_GET['status_filter']) : '';
         $trigger_f = isset($_GET['trigger_filter']) ? sanitize_key($_GET['trigger_filter']) : '';
-        $per_page  = 20;
+        $per_page  = isset($_GET['per_page']) ? max(10, min(100, (int) $_GET['per_page'])) : 20;
 
         $logs  = Schema_Genie_AI_Request_Log::get_logs($paged, $per_page, $status_f, $trigger_f);
         $total = Schema_Genie_AI_Request_Log::get_total_count($status_f, $trigger_f);
@@ -466,7 +612,10 @@ class Schema_Genie_AI_Settings {
         </div>
 
         <div class="sgai-section-box">
-            <h2>📝 <?php esc_html_e('AI Request Log', 'schema-genie-ai'); ?></h2>
+            <h2>📝 <?php esc_html_e('AI Request Log', 'schema-genie-ai'); ?>
+                <button type="button" id="sgai-sync-logs" class="button" style="margin-left:12px;vertical-align:middle;font-size:13px;">🔄 <?php esc_html_e('Sync Missing Logs', 'schema-genie-ai'); ?></button>
+                <span id="sgai-sync-result" style="font-size:13px;color:#666;margin-left:8px;"></span>
+            </h2>
 
             <!-- Filters -->
             <div style="margin-bottom:12px;display:flex;gap:10px;flex-wrap:wrap;">
@@ -523,32 +672,88 @@ class Schema_Genie_AI_Settings {
             </table>
 
             <!-- Pagination -->
-            <?php if ($total_pages > 1): ?>
-            <div class="tablenav bottom" style="margin-top:8px;">
-                <div class="tablenav-pages">
-                    <span class="displaying-num"><?php echo esc_html($total); ?> items</span>
-                    <?php
-                    $filter_args = '';
-                    if ($status_f) $filter_args .= '&status_filter=' . $status_f;
-                    if ($trigger_f) $filter_args .= '&trigger_filter=' . $trigger_f;
-                    for ($i = 1; $i <= $total_pages; $i++):
-                        if ($i === $paged): ?><span class="tablenav-pages-navspan button disabled"><?php echo $i; ?></span>
-                        <?php else: ?><a class="button" href="<?php echo esc_url(add_query_arg('paged', $i, $base_url . $filter_args)); ?>"><?php echo $i; ?></a>
-                        <?php endif;
-                    endfor; ?>
-                </div>
+            <?php if ($total_pages > 1):
+                $filter_args = '';
+                if ($status_f) $filter_args .= '&status_filter=' . $status_f;
+                if ($trigger_f) $filter_args .= '&trigger_filter=' . $trigger_f;
+                $pag_base = $base_url . $filter_args;
+            ?>
+            <div class="sgai-pagination">
+                <span class="sgai-pg-info"><?php echo esc_html($total); ?> items</span>
+                <span class="sgai-perpage">
+                    <select onchange="window.location.href='<?php echo esc_js($pag_base); ?>&per_page='+this.value">
+                        <?php foreach ([10, 20, 25, 50, 100] as $pp): ?>
+                            <option value="<?php echo $pp; ?>" <?php selected($per_page, $pp); ?>><?php echo $pp; ?> / page</option>
+                        <?php endforeach; ?>
+                    </select>
+                </span>
+                <?php if ($paged > 1): ?>
+                    <a class="sgai-pg-btn" href="<?php echo esc_url(add_query_arg(['paged' => $paged - 1, 'per_page' => $per_page], $pag_base)); ?>">&lsaquo;</a>
+                <?php else: ?>
+                    <span class="sgai-pg-btn disabled">&lsaquo;</span>
+                <?php endif; ?>
+                <?php
+                $range = 2;
+                $show_pages = [];
+                $show_pages[] = 1;
+                for ($i = max(2, $paged - $range); $i <= min($total_pages - 1, $paged + $range); $i++) {
+                    $show_pages[] = $i;
+                }
+                if ($total_pages > 1) $show_pages[] = $total_pages;
+                $show_pages = array_unique($show_pages);
+                sort($show_pages);
+                $prev = 0;
+                foreach ($show_pages as $pg):
+                    if ($prev && $pg - $prev > 1): ?>
+                        <span class="sgai-pg-dots">···</span>
+                    <?php endif;
+                    if ($pg === $paged): ?>
+                        <span class="sgai-pg-btn active"><?php echo $pg; ?></span>
+                    <?php else: ?>
+                        <a class="sgai-pg-btn" href="<?php echo esc_url(add_query_arg(['paged' => $pg, 'per_page' => $per_page], $pag_base)); ?>"><?php echo $pg; ?></a>
+                    <?php endif;
+                    $prev = $pg;
+                endforeach; ?>
+                <?php if ($paged < $total_pages): ?>
+                    <a class="sgai-pg-btn" href="<?php echo esc_url(add_query_arg(['paged' => $paged + 1, 'per_page' => $per_page], $pag_base)); ?>">&rsaquo;</a>
+                <?php else: ?>
+                    <span class="sgai-pg-btn disabled">&rsaquo;</span>
+                <?php endif; ?>
             </div>
             <?php endif; ?>
         </div>
 
         <script>
         jQuery(function($){
+            var logBaseUrl='<?php echo esc_js(esc_url_raw($base_url)); ?>';
+
             $('#sgai-log-filter').on('click',function(){
                 var s=$('#sgai-log-status').val(),t=$('#sgai-log-trigger').val();
-                var url='<?php echo esc_js($base_url); ?>';
+                var url=logBaseUrl;
                 if(s)url+='&status_filter='+s;
                 if(t)url+='&trigger_filter='+t;
                 window.location.href=url;
+            });
+
+            // Sync Missing Logs
+            $('#sgai-sync-logs').on('click',function(){
+                var $btn=$(this),$res=$('#sgai-sync-result');
+                $btn.prop('disabled',true).text('Syncing...');
+                $res.text('');
+                $.post(ajaxurl,{action:'sgai_backfill_logs',nonce:'<?php echo wp_create_nonce('schema_genie_ai_nonce'); ?>'},function(r){
+                    if(r.success){
+                        $res.css('color','#00a32a').text(r.data.message);
+                        if(r.data.count>0){
+                            setTimeout(function(){location.reload();},1500);
+                        }
+                    }else{
+                        $res.css('color','#d63638').text(r.data.message||'Sync failed');
+                    }
+                    $btn.prop('disabled',false).html('\ud83d\udd04 Sync Missing Logs');
+                }).fail(function(){
+                    $res.css('color','#d63638').text('Request failed');
+                    $btn.prop('disabled',false).html('\ud83d\udd04 Sync Missing Logs');
+                });
             });
         });
         </script>
