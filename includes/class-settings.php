@@ -498,12 +498,13 @@ class Schema_Genie_AI_Settings {
         <script>
         jQuery(function($){
             var nonce='<?php echo esc_js($nonce); ?>',running=false,stopRequested=false;
+            var filterBaseUrl=<?php echo wp_json_encode($base_url_js); ?>;
 
             // Filter button
             $('#sgai-filter-btn').on('click',function(){
                 var f=$('#sgai-type-filter').val();
                 var s=$('#sgai-status-filter').val();
-                var url='<?php echo esc_js($base_url_js); ?>'+(f?'&post_type_filter='+f:'');
+                var url=filterBaseUrl+(f?'&post_type_filter='+f:'');
                 if(s) url+='&status_filter='+s;
                 <?php if ($has_wpml): ?>
                 var l=$('#sgai-lang-filter').val();
